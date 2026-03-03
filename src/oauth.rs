@@ -18,8 +18,11 @@ type ConfiguredClient =
 pub struct OAuthUser {
     pub provider: String,
     pub sub: String,
+    #[allow(dead_code)]
     pub email: Option<String>,
+    #[allow(dead_code)]
     pub name: Option<String>,
+    #[allow(dead_code)]
     pub avatar_url: Option<String>,
 }
 

@@ -311,6 +311,7 @@ impl Database {
         }
     }
 
+    #[allow(dead_code)]
     pub fn delete_session(&self, token: &str) -> rusqlite::Result<bool> {
         let conn = self.conn.lock().unwrap();
         let affected = conn.execute(
@@ -380,6 +381,7 @@ impl Database {
 
     /// Deletes all expired sessions and pending_auth rows. Returns the total
     /// number of rows removed.
+    #[allow(dead_code)]
     pub fn cleanup_expired(&self) -> rusqlite::Result<usize> {
         let now = Utc::now().timestamp();
         let conn = self.conn.lock().unwrap();
