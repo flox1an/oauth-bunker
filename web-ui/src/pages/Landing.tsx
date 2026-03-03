@@ -43,7 +43,7 @@ export default function Landing() {
         <div className="text-center space-y-2">
           <h1 className="text-3xl font-bold tracking-tight">Nostr OAuth Signer</h1>
           <p className="text-muted-foreground">
-            Sign in with your existing account to get a Nostr identity. No keys to manage.
+            Sign in with your existing account to connect with a Nostr identity.
           </p>
         </div>
 
@@ -98,7 +98,7 @@ export default function Landing() {
         </Card>
 
         <p className="text-center text-sm text-muted-foreground">
-          Your Nostr keys are generated and encrypted on the server. You can import your own key later.
+          Choose from available Nostr identities after signing in.
         </p>
       </div>
     </div>
