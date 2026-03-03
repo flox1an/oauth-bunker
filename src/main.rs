@@ -1,6 +1,7 @@
 mod config;
 mod crypto;
 mod db;
+mod oauth;
 
 use config::Config;
 use tracing_subscriber::{fmt, EnvFilter};
