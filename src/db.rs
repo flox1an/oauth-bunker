@@ -12,6 +12,7 @@ pub struct User {
     pub oauth_provider: String,
     pub oauth_sub: String,
     pub email: Option<String>,
+    pub avatar_url: Option<String>,
     pub created_at: i64,
 }
 
@@ -50,6 +51,15 @@ pub struct Identity {
     pub nonce: Vec<u8>,
     pub pubkey: String,
     pub label: Option<String>,
+    pub created_at: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct Assignment {
+    pub id: String,
+    pub user_id: String,
+    pub identity_id: String,
+    pub expires_at: i64,
     pub created_at: i64,
 }
 
@@ -163,6 +173,16 @@ impl Database {
             conn.execute_batch("ALTER TABLE users ADD COLUMN email TEXT;")?;
         }
 
+        // Add avatar_url column to users table if it doesn't exist
+        let has_avatar_url: bool = conn
+            .prepare("SELECT COUNT(*) FROM pragma_table_info('users') WHERE name = 'avatar_url'")?
+            .query_row([], |row| row.get::<_, i64>(0))
+            .map(|count| count > 0)?;
+
+        if !has_avatar_url {
+            conn.execute_batch("ALTER TABLE users ADD COLUMN avatar_url TEXT;")?;
+        }
+
         // Add identity_id column to connections if it doesn't exist
         let has_identity_id: bool = conn
             .prepare("SELECT COUNT(*) FROM pragma_table_info('connections') WHERE name = 'identity_id'")?
@@ -171,6 +191,21 @@ impl Database {
         if !has_identity_id {
             conn.execute_batch("ALTER TABLE connections ADD COLUMN identity_id TEXT REFERENCES identities(id);")?;
         }
+
+        // Create user_identity_assignments table if it doesn't exist
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS user_identity_assignments (
+                id           TEXT    PRIMARY KEY,
+                user_id      TEXT    NOT NULL REFERENCES users(id),
+                identity_id  TEXT    NOT NULL REFERENCES identities(id),
+                expires_at   INTEGER NOT NULL,
+                created_at   INTEGER NOT NULL,
+                UNIQUE(user_id, identity_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_assignments_user_id ON user_identity_assignments(user_id);
+            CREATE INDEX IF NOT EXISTS idx_assignments_identity_id ON user_identity_assignments(identity_id);
+            CREATE INDEX IF NOT EXISTS idx_assignments_expires_at ON user_identity_assignments(expires_at);"
+        )?;
 
         Ok(())
     }
@@ -182,13 +217,14 @@ impl Database {
     pub fn create_user(&self, user: &User) -> rusqlite::Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO users (id, oauth_provider, oauth_sub, encrypted_nsec, nonce, pubkey, email, created_at)
-             VALUES (?1, ?2, ?3, X'00', X'00', '', ?4, ?5)",
+            "INSERT INTO users (id, oauth_provider, oauth_sub, encrypted_nsec, nonce, pubkey, email, avatar_url, created_at)
+             VALUES (?1, ?2, ?3, X'00', X'00', '', ?4, ?5, ?6)",
             params![
                 user.id,
                 user.oauth_provider,
                 user.oauth_sub,
                 user.email,
+                user.avatar_url,
                 user.created_at,
             ],
         )?;
@@ -202,7 +238,7 @@ impl Database {
     ) -> rusqlite::Result<Option<User>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, oauth_provider, oauth_sub, email, created_at
+            "SELECT id, oauth_provider, oauth_sub, email, avatar_url, created_at
              FROM users WHERE oauth_provider = ?1 AND oauth_sub = ?2",
         )?;
         let mut rows = stmt.query_map(params![provider, sub], |row| {
@@ -211,7 +247,8 @@ impl Database {
                 oauth_provider: row.get(1)?,
                 oauth_sub: row.get(2)?,
                 email: row.get(3)?,
-                created_at: row.get(4)?,
+                avatar_url: row.get(4)?,
+                created_at: row.get(5)?,
             })
         })?;
         match rows.next() {
@@ -229,10 +266,19 @@ impl Database {
         Ok(())
     }
 
+    pub fn update_user_avatar(&self, user_id: &str, avatar_url: &str) -> rusqlite::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE users SET avatar_url = ?1 WHERE id = ?2",
+            params![avatar_url, user_id],
+        )?;
+        Ok(())
+    }
+
     pub fn find_user_by_id(&self, id: &str) -> rusqlite::Result<Option<User>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, oauth_provider, oauth_sub, email, created_at
+            "SELECT id, oauth_provider, oauth_sub, email, avatar_url, created_at
              FROM users WHERE id = ?1",
         )?;
         let mut rows = stmt.query_map(params![id], |row| {
@@ -241,7 +287,8 @@ impl Database {
                 oauth_provider: row.get(1)?,
                 oauth_sub: row.get(2)?,
                 email: row.get(3)?,
-                created_at: row.get(4)?,
+                avatar_url: row.get(4)?,
+                created_at: row.get(5)?,
             })
         })?;
         match rows.next() {
@@ -288,6 +335,37 @@ impl Database {
                 created_at: row.get(4)?,
                 last_used_at: row.get(5)?,
             })
+        })?;
+        rows.collect()
+    }
+
+    /// List connections for a user, including the assigned identity pubkey and label.
+    pub fn list_connections_with_identity(
+        &self,
+        user_id: &str,
+    ) -> rusqlite::Result<Vec<(NipConnection, Option<String>, Option<String>)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT c.id, c.user_id, c.client_pubkey, c.relay_url, c.created_at, c.last_used_at,
+                    i.pubkey, i.label
+             FROM connections c
+             LEFT JOIN identities i ON c.identity_id = i.id
+             WHERE c.user_id = ?1
+             ORDER BY c.created_at DESC",
+        )?;
+        let rows = stmt.query_map(params![user_id], |row| {
+            Ok((
+                NipConnection {
+                    id: row.get(0)?,
+                    user_id: row.get(1)?,
+                    client_pubkey: row.get(2)?,
+                    relay_url: row.get(3)?,
+                    created_at: row.get(4)?,
+                    last_used_at: row.get(5)?,
+                },
+                row.get::<_, Option<String>>(6)?,
+                row.get::<_, Option<String>>(7)?,
+            ))
         })?;
         rows.collect()
     }
@@ -562,5 +640,149 @@ impl Database {
             params![now],
         )?;
         Ok(sessions + pending)
+    }
+
+    // -----------------------------------------------------------------------
+    // Assignments
+    // -----------------------------------------------------------------------
+
+    pub fn list_all_users(&self) -> rusqlite::Result<Vec<User>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, oauth_provider, oauth_sub, email, avatar_url, created_at
+             FROM users ORDER BY created_at DESC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(User {
+                id: row.get(0)?,
+                oauth_provider: row.get(1)?,
+                oauth_sub: row.get(2)?,
+                email: row.get(3)?,
+                avatar_url: row.get(4)?,
+                created_at: row.get(5)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    pub fn create_assignment(&self, assignment: &Assignment) -> rusqlite::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO user_identity_assignments (id, user_id, identity_id, expires_at, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                assignment.id,
+                assignment.user_id,
+                assignment.identity_id,
+                assignment.expires_at,
+                assignment.created_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_assignments(&self) -> rusqlite::Result<Vec<(Assignment, Option<String>, Option<String>, Option<String>)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT a.id, a.user_id, a.identity_id, a.expires_at, a.created_at,
+                    u.email, i.pubkey, i.label
+             FROM user_identity_assignments a
+             JOIN users u ON a.user_id = u.id
+             JOIN identities i ON a.identity_id = i.id
+             ORDER BY a.created_at DESC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                Assignment {
+                    id: row.get(0)?,
+                    user_id: row.get(1)?,
+                    identity_id: row.get(2)?,
+                    expires_at: row.get(3)?,
+                    created_at: row.get(4)?,
+                },
+                row.get::<_, Option<String>>(5)?, // user email
+                row.get::<_, Option<String>>(6)?, // identity pubkey
+                row.get::<_, Option<String>>(7)?, // identity label
+            ))
+        })?;
+        rows.collect()
+    }
+
+    pub fn delete_assignment(&self, id: &str) -> rusqlite::Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let affected = conn.execute(
+            "DELETE FROM user_identity_assignments WHERE id = ?1",
+            params![id],
+        )?;
+        Ok(affected > 0)
+    }
+
+    pub fn has_valid_assignment(&self, user_id: &str, identity_id: &str) -> rusqlite::Result<bool> {
+        let now = Utc::now().timestamp();
+        let conn = self.conn.lock().unwrap();
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM user_identity_assignments
+             WHERE user_id = ?1 AND identity_id = ?2 AND expires_at > ?3",
+            params![user_id, identity_id, now],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
+    }
+
+    pub fn list_identities_for_user(&self, user_id: &str) -> rusqlite::Result<Vec<Identity>> {
+        let now = Utc::now().timestamp();
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT i.id, i.encrypted_nsec, i.nonce, i.pubkey, i.label, i.created_at
+             FROM identities i
+             JOIN user_identity_assignments a ON a.identity_id = i.id
+             WHERE a.user_id = ?1 AND a.expires_at > ?2
+             ORDER BY i.created_at DESC",
+        )?;
+        let rows = stmt.query_map(params![user_id, now], |row| {
+            Ok(Identity {
+                id: row.get(0)?,
+                encrypted_nsec: row.get(1)?,
+                nonce: row.get(2)?,
+                pubkey: row.get(3)?,
+                label: row.get(4)?,
+                created_at: row.get(5)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    /// Find expired assignments and revoke their connections. Returns number of connections deleted.
+    pub fn cleanup_expired_assignments(&self) -> rusqlite::Result<usize> {
+        let now = Utc::now().timestamp();
+        let conn = self.conn.lock().unwrap();
+
+        // Delete connections whose user+identity pair has an expired assignment
+        let connections_deleted = conn.execute(
+            "DELETE FROM connections WHERE id IN (
+                SELECT c.id FROM connections c
+                JOIN user_identity_assignments a ON c.user_id = a.user_id AND c.identity_id = a.identity_id
+                WHERE a.expires_at <= ?1
+            )",
+            params![now],
+        )?;
+
+        // Delete the expired assignments
+        conn.execute(
+            "DELETE FROM user_identity_assignments WHERE expires_at <= ?1",
+            params![now],
+        )?;
+
+        Ok(connections_deleted)
+    }
+
+    /// Delete connections for a specific user+identity pair (used when manually deleting an assignment).
+    pub fn delete_connections_for_assignment(&self, user_id: &str, identity_id: &str) -> rusqlite::Result<usize> {
+        let conn = self.conn.lock().unwrap();
+        let affected = conn.execute(
+            "DELETE FROM connections WHERE user_id = ?1 AND identity_id = ?2",
+            params![user_id, identity_id],
+        )?;
+        Ok(affected)
     }
 }
