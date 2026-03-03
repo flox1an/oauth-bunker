@@ -23,6 +23,7 @@ interface UserInfo {
   npub: string
   oauth_provider: string
   created_at: number
+  bunker_url: string
 }
 
 interface Connection {
@@ -31,6 +32,10 @@ interface Connection {
   relay_url: string
   created_at: number
   last_used_at: number
+  oauth_provider: string
+  oauth_sub: string
+  created_by_email: string | null
+  is_own: boolean
 }
 
 function relativeTime(timestamp: number): string {
@@ -197,15 +202,27 @@ export default function Dashboard() {
           <CardHeader>
             <CardTitle>Connect from any Nostr client</CardTitle>
             <CardDescription>
-              Enter this domain in any NIP-46 compatible Nostr client to connect.
+              Use the domain or bunker URL in any NIP-46 compatible Nostr client to connect.
             </CardDescription>
           </CardHeader>
-          <CardContent>
-            <div className="flex items-center gap-2">
-              <code className="min-w-0 flex-1 truncate rounded bg-muted px-2 py-1 text-sm">
-                {connectionDomain}
-              </code>
-              <CopyButton text={connectionDomain} />
+          <CardContent className="space-y-3">
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">Domain</Label>
+              <div className="flex items-center gap-2">
+                <code className="min-w-0 flex-1 truncate rounded bg-muted px-2 py-1 text-sm">
+                  {connectionDomain}
+                </code>
+                <CopyButton text={connectionDomain} />
+              </div>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">Bunker URL</Label>
+              <div className="flex items-center gap-2">
+                <code className="min-w-0 flex-1 truncate rounded bg-muted px-2 py-1 text-sm">
+                  {user?.bunker_url}
+                </code>
+                <CopyButton text={user?.bunker_url ?? ''} />
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -227,35 +244,51 @@ export default function Dashboard() {
                   {i > 0 && <Separator className="mb-3" />}
                   <div className="flex items-center justify-between gap-2">
                     <div className="min-w-0 space-y-1">
-                      <p className="truncate text-sm font-mono">
-                        {truncate(conn.client_pubkey, 24)}
-                      </p>
+                      <div className="flex items-center gap-2">
+                        <p className="truncate text-sm font-mono">
+                          {truncate(conn.client_pubkey, 24)}
+                        </p>
+                        <Badge variant={conn.is_own ? 'default' : 'outline'} className="shrink-0 text-xs">
+                          {conn.oauth_provider}
+                        </Badge>
+                      </div>
+                      {conn.created_by_email && (
+                        <p className="text-xs text-muted-foreground">
+                          {conn.created_by_email}
+                        </p>
+                      )}
                       <p className="text-xs text-muted-foreground">
                         {conn.relay_url} -- last used {relativeTime(conn.last_used_at)}
                       </p>
                     </div>
-                    <AlertDialog>
-                      <AlertDialogTrigger asChild>
-                        <Button variant="destructive" size="sm">
-                          Revoke
-                        </Button>
-                      </AlertDialogTrigger>
-                      <AlertDialogContent>
-                        <AlertDialogHeader>
-                          <AlertDialogTitle>Revoke connection?</AlertDialogTitle>
-                          <AlertDialogDescription>
-                            This will disconnect the client. They will need to re-authenticate to
-                            connect again.
-                          </AlertDialogDescription>
-                        </AlertDialogHeader>
-                        <AlertDialogFooter>
-                          <AlertDialogCancel>Cancel</AlertDialogCancel>
-                          <AlertDialogAction onClick={() => handleRevoke(conn.id)}>
+                    {conn.is_own ? (
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                          <Button variant="destructive" size="sm">
                             Revoke
-                          </AlertDialogAction>
-                        </AlertDialogFooter>
-                      </AlertDialogContent>
-                    </AlertDialog>
+                          </Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>Revoke connection?</AlertDialogTitle>
+                            <AlertDialogDescription>
+                              This will disconnect the client. They will need to re-authenticate to
+                              connect again.
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel>Cancel</AlertDialogCancel>
+                            <AlertDialogAction onClick={() => handleRevoke(conn.id)}>
+                              Revoke
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
+                    ) : (
+                      <Badge variant="secondary" className="shrink-0 text-xs">
+                        other user
+                      </Badge>
+                    )}
                   </div>
                 </div>
               ))}
