@@ -1,4 +1,5 @@
 mod config;
+mod db;
 
 use config::Config;
 use tracing_subscriber::{fmt, EnvFilter};
