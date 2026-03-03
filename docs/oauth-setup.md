@@ -79,6 +79,63 @@ The OAuth URLs use the `consumers` tenant, which only allows personal Microsoft 
 
 To change this, modify the auth/token URLs in `src/oauth.rs`.
 
+## Apple (Sign in with Apple)
+
+1. Go to [Apple Developer Portal](https://developer.apple.com/account)
+2. Navigate to **Certificates, Identifiers & Profiles > Identifiers**
+3. Click **+** to register a new identifier, choose **App IDs**, then **App**
+4. Fill in description and Bundle ID (e.g., `com.yourdomain.oauthsigner`)
+5. Enable **Sign in with Apple** capability
+6. Click **Continue** and **Register**
+
+Now create a **Services ID** (this is your OAuth client ID):
+
+7. Go back to **Identifiers**, click **+**, choose **Services IDs**
+8. Fill in description and identifier (e.g., `com.yourdomain.oauthsigner.web`)
+9. Enable **Sign in with Apple**
+10. Click **Configure** next to Sign in with Apple:
+    - Primary App ID: select the App ID from step 4
+    - Domains: `your-domain.com`
+    - Return URLs: `https://your-domain.com/auth/apple/callback`
+    - For local development: `https://localhost:3000/auth/apple/callback` (Apple requires HTTPS even for dev)
+11. Click **Save** and **Continue** and **Register**
+
+Now create a **Key** to generate the client secret:
+
+12. Navigate to **Keys**, click **+**
+13. Name it, enable **Sign in with Apple**, click **Configure**
+14. Select your Primary App ID, click **Save**
+15. Click **Continue** and **Register**
+16. Download the `.p8` key file (only downloadable once!)
+17. Note the **Key ID**
+
+Generate the client secret JWT:
+
+Apple doesn't use a static client secret. Instead, you generate a JWT signed with your `.p8` key. You can use a script or tool to generate it. The JWT must be regenerated every 6 months (max expiry).
+
+Example using Python:
+```bash
+pip install pyjwt cryptography
+python3 -c "
+import jwt, time
+key = open('AuthKey_XXXXXXXXXX.p8').read()
+token = jwt.encode(
+    {'iss': 'YOUR_TEAM_ID', 'iat': int(time.time()), 'exp': int(time.time()) + 15777000, 'aud': 'https://appleid.apple.com', 'sub': 'com.yourdomain.oauthsigner.web'},
+    key, algorithm='ES256',
+    headers={'kid': 'YOUR_KEY_ID'}
+)
+print(token)
+"
+```
+
+18. Copy credentials to your `.env`:
+    ```
+    APPLE_CLIENT_ID=com.yourdomain.oauthsigner.web
+    APPLE_CLIENT_SECRET=<generated JWT>
+    ```
+
+Note: Apple requires HTTPS for redirect URIs, even in development. Use a tunneling service like `ngrok` or configure a local TLS proxy.
+
 ## Master Encryption Key
 
 Generate a 32-byte random key for encrypting stored Nostr private keys:
@@ -109,4 +166,6 @@ GITHUB_CLIENT_ID=...
 GITHUB_CLIENT_SECRET=...
 MICROSOFT_CLIENT_ID=...
 MICROSOFT_CLIENT_SECRET=...
+APPLE_CLIENT_ID=...
+APPLE_CLIENT_SECRET=...
 ```

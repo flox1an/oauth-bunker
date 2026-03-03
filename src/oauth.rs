@@ -1,3 +1,4 @@
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use oauth2::basic::BasicClient;
 use oauth2::{
     AuthUrl, ClientId, ClientSecret, CsrfToken, EndpointNotSet, EndpointSet, RedirectUrl, Scope,
@@ -5,6 +6,8 @@ use oauth2::{
 };
 use reqwest::redirect;
 use serde::Deserialize;
+
+use oauth2::url;
 
 use crate::config::Config;
 
@@ -24,6 +27,9 @@ pub struct OAuthManager {
     google_client: ConfiguredClient,
     github_client: ConfiguredClient,
     microsoft_client: ConfiguredClient,
+    apple_client_id: String,
+    apple_client_secret: String,
+    apple_redirect_uri: String,
     http_client: reqwest::Client,
 }
 
@@ -41,6 +47,18 @@ struct GitHubUserInfo {
     login: String,
     name: Option<String>,
     avatar_url: Option<String>,
+}
+
+/// Apple token response contains an id_token JWT with user claims.
+#[derive(Deserialize)]
+struct AppleTokenExchangeResponse {
+    id_token: String,
+}
+
+/// Claims from Apple's id_token JWT payload.
+struct AppleIdTokenClaims {
+    sub: String,
+    email: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -117,6 +135,9 @@ impl OAuthManager {
             google_client,
             github_client,
             microsoft_client,
+            apple_client_id: config.apple_client_id.clone(),
+            apple_client_secret: config.apple_client_secret.clone(),
+            apple_redirect_uri: format!("{}/auth/apple/callback", config.public_url),
             http_client,
         })
     }
@@ -153,6 +174,18 @@ impl OAuthManager {
             .add_scope(Scope::new("profile".to_string()))
             .add_scope(Scope::new("User.Read".to_string()))
             .url();
+        url.to_string()
+    }
+
+    pub fn apple_auth_url(&self, state: &str) -> String {
+        let mut url = url::Url::parse("https://appleid.apple.com/auth/authorize").unwrap();
+        url.query_pairs_mut()
+            .append_pair("client_id", &self.apple_client_id)
+            .append_pair("redirect_uri", &self.apple_redirect_uri)
+            .append_pair("response_type", "code")
+            .append_pair("scope", "name email")
+            .append_pair("response_mode", "form_post")
+            .append_pair("state", state);
         url.to_string()
     }
 
@@ -217,6 +250,39 @@ impl OAuthManager {
         })
     }
 
+    pub async fn exchange_apple_code(&self, code: &str) -> Result<OAuthUser, String> {
+        // Apple requires a manual token exchange because the standard oauth2 BasicClient
+        // doesn't expose the id_token from the response.
+        let response: AppleTokenExchangeResponse = self
+            .http_client
+            .post("https://appleid.apple.com/auth/token")
+            .form(&[
+                ("grant_type", "authorization_code"),
+                ("code", code),
+                ("client_id", self.apple_client_id.as_str()),
+                ("client_secret", self.apple_client_secret.as_str()),
+                ("redirect_uri", self.apple_redirect_uri.as_str()),
+            ])
+            .send()
+            .await
+            .map_err(|e| format!("Apple token exchange failed: {e}"))?
+            .json()
+            .await
+            .map_err(|e| format!("Apple token response parse failed: {e}"))?;
+
+        // Decode JWT payload (base64 middle segment) — no signature verification needed
+        // since we just received this directly from Apple's token endpoint over HTTPS
+        let claims = decode_jwt_payload(&response.id_token)?;
+
+        Ok(OAuthUser {
+            provider: "apple".to_string(),
+            sub: claims.sub,
+            email: claims.email,
+            name: None, // Apple only sends name on first auth via the form_post body
+            avatar_url: None,
+        })
+    }
+
     pub async fn exchange_microsoft_code(&self, code: &str) -> Result<OAuthUser, String> {
         let token_result = self
             .microsoft_client
@@ -246,4 +312,30 @@ impl OAuthManager {
             avatar_url: None,
         })
     }
+}
+
+/// Decode Apple id_token JWT payload without signature verification.
+/// Safe when the JWT was just received from Apple's token endpoint over HTTPS.
+fn decode_jwt_payload(jwt: &str) -> Result<AppleIdTokenClaims, String> {
+    let parts: Vec<&str> = jwt.split('.').collect();
+    if parts.len() != 3 {
+        return Err("Invalid JWT format".into());
+    }
+    let payload_bytes = URL_SAFE_NO_PAD
+        .decode(parts[1])
+        .map_err(|e| format!("JWT base64 decode failed: {e}"))?;
+
+    #[derive(Deserialize)]
+    struct Claims {
+        sub: String,
+        email: Option<String>,
+    }
+
+    let claims: Claims =
+        serde_json::from_slice(&payload_bytes).map_err(|e| format!("JWT payload parse failed: {e}"))?;
+
+    Ok(AppleIdTokenClaims {
+        sub: claims.sub,
+        email: claims.email,
+    })
 }

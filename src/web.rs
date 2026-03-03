@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Form, Path, Query, State},
     http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Json, Redirect, Response},
     routing::{delete, get, post},
@@ -71,9 +71,11 @@ pub fn router() -> Router<AppState> {
         .route("/auth/google", get(auth_google))
         .route("/auth/github", get(auth_github))
         .route("/auth/microsoft", get(auth_microsoft))
+        .route("/auth/apple", get(auth_apple))
         .route("/auth/google/callback", get(auth_google_callback))
         .route("/auth/github/callback", get(auth_github_callback))
         .route("/auth/microsoft/callback", get(auth_microsoft_callback))
+        .route("/auth/apple/callback", post(auth_apple_callback))
         .route("/auth/{request_id}", get(auth_popup))
         .route("/api/me", get(api_me))
         .route("/api/connections", get(api_connections))
@@ -191,6 +193,15 @@ async fn auth_microsoft(
     Redirect::temporary(&url)
 }
 
+async fn auth_apple(
+    State(state): State<AppState>,
+    Query(params): Query<AuthQuery>,
+) -> impl IntoResponse {
+    let request_id = params.request_id.unwrap_or_default();
+    let url = state.oauth.apple_auth_url(&request_id);
+    Redirect::temporary(&url)
+}
+
 // ---------------------------------------------------------------------------
 // OAuth callbacks
 // ---------------------------------------------------------------------------
@@ -221,6 +232,23 @@ async fn auth_github_callback(
         .await
         .map_err(|e| {
             tracing::error!("GitHub OAuth exchange failed: {e}");
+            (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": e}))).into_response()
+        })?;
+
+    handle_oauth_complete(&state, oauth_user, params.state).await
+}
+
+/// Apple uses response_mode=form_post, so the callback comes as a POST with form data
+async fn auth_apple_callback(
+    State(state): State<AppState>,
+    Form(params): Form<CallbackQuery>,
+) -> Result<Response, Response> {
+    let oauth_user = state
+        .oauth
+        .exchange_apple_code(&params.code)
+        .await
+        .map_err(|e| {
+            tracing::error!("Apple OAuth exchange failed: {e}");
             (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": e}))).into_response()
         })?;
 
