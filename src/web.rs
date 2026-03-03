@@ -569,10 +569,19 @@ async fn api_delete_connection(
 
 async fn api_list_identities(
     State(state): State<AppState>,
+    headers: HeaderMap,
 ) -> Result<impl IntoResponse, Response> {
-    let identities = state.db.list_identities().map_err(|e| {
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("Database error: {e}")}))).into_response()
-    })?;
+    // If user is authenticated, return only assigned identities
+    let identities = if let Ok(user) = get_authenticated_user(&state, &headers) {
+        state.db.list_identities_for_user(&user.id).map_err(|e| {
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("Database error: {e}")}))).into_response()
+        })?
+    } else {
+        // Unauthenticated: return all (for admin page)
+        state.db.list_identities().map_err(|e| {
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("Database error: {e}")}))).into_response()
+        })?
+    };
 
     let response: Vec<IdentityResponse> = identities
         .into_iter()
@@ -681,6 +690,13 @@ async fn api_select_identity(
     })?.ok_or_else(|| {
         (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "Identity not found"}))).into_response()
     })?;
+
+    // Validate user has a valid assignment for this identity
+    if !state.db.has_valid_assignment(&user.id, &body.identity_id).map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("Database error: {e}")}))).into_response()
+    })? {
+        return Err((StatusCode::FORBIDDEN, Json(serde_json::json!({"error": "No valid assignment for this identity"}))).into_response());
+    }
 
     // Find pending auth
     let pending = state.db.find_pending_auth(&body.request_id).map_err(|e| {
