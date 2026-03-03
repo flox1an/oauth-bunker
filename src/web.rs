@@ -395,7 +395,7 @@ async fn handle_oauth_complete(
 // ---------------------------------------------------------------------------
 
 async fn auth_popup(Path(request_id): Path<String>) -> impl IntoResponse {
-    Redirect::temporary(&format!("/auth/google?request_id={request_id}"))
+    Redirect::temporary(&format!("/auth-popup/{request_id}"))
 }
 
 // ---------------------------------------------------------------------------

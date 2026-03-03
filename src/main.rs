@@ -4,6 +4,7 @@ mod crypto;
 mod db;
 mod oauth;
 mod state;
+mod static_files;
 mod web;
 
 use std::sync::Arc;
@@ -73,8 +74,11 @@ async fn main() {
         bunker_pubkey,
     };
 
-    // Build router
-    let app = web::router().with_state(state);
+    // Build router with embedded static assets
+    let serve_assets = static_files::serve_assets();
+    let app = web::router()
+        .with_state(state)
+        .fallback_service(serve_assets);
 
     // Start server
     let bind_addr = format!("{}:{}", config.host, config.port);

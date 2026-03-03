@@ -1352,6 +1352,7 @@ dependencies = [
  "aes-gcm",
  "axum",
  "axum-embed",
+ "base64",
  "chrono",
  "dotenvy",
  "hex",
