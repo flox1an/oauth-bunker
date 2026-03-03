@@ -482,10 +482,26 @@ impl Bunker {
     async fn find_identity_by_client(&self, client_pubkey: &PublicKey) -> Result<Identity, String> {
         let client_pk_hex = client_pubkey.to_hex();
 
-        self.db
+        let identity = self.db
             .find_identity_by_client_pubkey(&client_pk_hex)
             .map_err(|e| format!("DB error: {e}"))?
-            .ok_or_else(|| "No identity found for this client".to_string())
+            .ok_or_else(|| "No identity found for this client".to_string())?;
+
+        // Find the user_id for this connection to check assignment
+        let connections = self.db
+            .list_connections_by_client_pubkey(&client_pk_hex)
+            .map_err(|e| format!("DB error: {e}"))?;
+
+        if let Some(conn) = connections.first() {
+            if !self.db.has_valid_assignment(&conn.user_id, &identity.id)
+                .map_err(|e| format!("DB error: {e}"))? {
+                // Assignment expired — revoke the connection
+                let _ = self.db.delete_connection(&conn.id, &conn.user_id);
+                return Err("Assignment expired for this identity".to_string());
+            }
+        }
+
+        Ok(identity)
     }
 }
 
