@@ -1,3 +1,4 @@
+mod bunker;
 mod config;
 mod crypto;
 mod db;
@@ -7,6 +8,7 @@ mod web;
 
 use std::sync::Arc;
 
+use bunker::Bunker;
 use config::Config;
 use crypto::KeyEncryptor;
 use db::Database;
@@ -52,13 +54,23 @@ async fn main() {
         std::process::exit(1);
     }));
 
+    // Create bunker
+    let bunker = Bunker::new(db.clone(), crypto.clone(), config.clone())
+        .await
+        .unwrap_or_else(|e| {
+            eprintln!("Bunker error: {e}");
+            std::process::exit(1);
+        });
+
+    let bunker_pubkey = Arc::new(RwLock::new(Some(bunker.pubkey().to_hex())));
+
     // Shared application state
     let state = AppState {
         config: config.clone(),
         db,
         crypto,
         oauth,
-        bunker_pubkey: Arc::new(RwLock::new(None)),
+        bunker_pubkey,
     };
 
     // Build router
@@ -75,8 +87,15 @@ async fn main() {
             std::process::exit(1);
         });
 
-    axum::serve(listener, app).await.unwrap_or_else(|e| {
-        eprintln!("Server error: {e}");
-        std::process::exit(1);
-    });
+    // Run web server and bunker concurrently
+    tokio::select! {
+        result = axum::serve(listener, app) => {
+            if let Err(e) = result {
+                eprintln!("Server error: {e}");
+            }
+        }
+        _ = bunker.run() => {
+            eprintln!("Bunker stopped unexpectedly");
+        }
+    }
 }
