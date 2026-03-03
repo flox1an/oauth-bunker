@@ -11,7 +11,7 @@ use nostr_sdk::{FromBech32, ToBech32};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::db::{Identity, NipConnection, Session, User};
+use crate::db::{Assignment, Identity, NipConnection, Session, User};
 use crate::state::AppState;
 
 // ---------------------------------------------------------------------------
@@ -39,6 +39,13 @@ pub struct AddIdentityBody {
 pub struct SelectIdentityBody {
     pub request_id: String,
     pub identity_id: String,
+}
+
+#[derive(Deserialize)]
+pub struct CreateAssignmentBody {
+    pub user_id: String,
+    pub identity_id: String,
+    pub duration: String, // "1d", "1w", "1m", "6m", "1y"
 }
 
 // ---------------------------------------------------------------------------
@@ -70,7 +77,10 @@ struct ConnectionResponse {
     oauth_provider: String,
     oauth_sub: String,
     created_by_email: Option<String>,
+    created_by_avatar: Option<String>,
     is_own: bool,
+    identity_pubkey: Option<String>,
+    identity_label: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -80,6 +90,27 @@ struct IdentityResponse {
     label: Option<String>,
     created_at: i64,
     active_connections: i64,
+}
+
+#[derive(Serialize)]
+struct UserResponse {
+    id: String,
+    email: Option<String>,
+    avatar_url: Option<String>,
+    oauth_provider: String,
+    created_at: i64,
+}
+
+#[derive(Serialize)]
+struct AssignmentResponse {
+    id: String,
+    user_id: String,
+    identity_id: String,
+    user_email: Option<String>,
+    identity_pubkey: Option<String>,
+    identity_label: Option<String>,
+    expires_at: i64,
+    created_at: i64,
 }
 
 /// Obfuscate an email: show first 4 chars + "..." + domain.
@@ -118,6 +149,9 @@ pub fn router() -> Router<AppState> {
         .route("/api/identities", get(api_list_identities))
         .route("/api/admin/identities", post(api_add_identity))
         .route("/api/admin/identities/{id}", delete(api_delete_identity))
+        .route("/api/admin/users", get(api_list_users))
+        .route("/api/admin/assignments", get(api_list_assignments).post(api_create_assignment))
+        .route("/api/admin/assignments/{id}", delete(api_delete_assignment))
         .route("/api/select-identity", post(api_select_identity))
 }
 
@@ -347,6 +381,11 @@ async fn handle_oauth_complete(
                     user.email = Some(email.clone());
                 }
             }
+            // Always update avatar_url from OAuth (may change over time)
+            if let Some(ref avatar_url) = oauth_user.avatar_url {
+                let _ = state.db.update_user_avatar(&user.id, avatar_url);
+                user.avatar_url = Some(avatar_url.clone());
+            }
             user
         }
         None => {
@@ -357,6 +396,7 @@ async fn handle_oauth_complete(
                 oauth_provider: oauth_user.provider.clone(),
                 oauth_sub: oauth_user.sub.clone(),
                 email: oauth_user.email.clone(),
+                avatar_url: oauth_user.avatar_url.clone(),
                 created_at: now,
             };
 
@@ -476,13 +516,13 @@ async fn api_connections(
 ) -> Result<impl IntoResponse, Response> {
     let user = get_authenticated_user(&state, &headers)?;
 
-    let connections = state.db.list_connections(&user.id).map_err(|e| {
+    let connections = state.db.list_connections_with_identity(&user.id).map_err(|e| {
         (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("Database error: {e}")}))).into_response()
     })?;
 
     let response: Vec<ConnectionResponse> = connections
         .into_iter()
-        .map(|c| ConnectionResponse {
+        .map(|(c, identity_pubkey, identity_label)| ConnectionResponse {
             is_own: true,
             id: c.id,
             client_pubkey: c.client_pubkey,
@@ -492,6 +532,9 @@ async fn api_connections(
             oauth_provider: user.oauth_provider.clone(),
             oauth_sub: user.oauth_sub.clone(),
             created_by_email: user.email.as_deref().map(obfuscate_email),
+            created_by_avatar: user.avatar_url.clone(),
+            identity_pubkey,
+            identity_label,
         })
         .collect();
 
@@ -701,4 +744,167 @@ async fn api_select_identity(
         "connected": true,
         "identity_pubkey": identity.pubkey,
     })))
+}
+
+// ---------------------------------------------------------------------------
+// Duration parser helper
+// ---------------------------------------------------------------------------
+
+fn parse_duration(duration: &str) -> Result<i64, String> {
+    match duration {
+        "1d" => Ok(86400),
+        "1w" => Ok(7 * 86400),
+        "1m" => Ok(30 * 86400),
+        "6m" => Ok(180 * 86400),
+        "1y" => Ok(365 * 86400),
+        _ => Err(format!("Invalid duration: {duration}. Use 1d, 1w, 1m, 6m, or 1y")),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// API: GET /api/admin/users
+// ---------------------------------------------------------------------------
+
+async fn api_list_users(
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, Response> {
+    let users = state.db.list_all_users().map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("Database error: {e}")}))).into_response()
+    })?;
+
+    let response: Vec<UserResponse> = users
+        .into_iter()
+        .map(|u| UserResponse {
+            id: u.id,
+            email: u.email,
+            avatar_url: u.avatar_url,
+            oauth_provider: u.oauth_provider,
+            created_at: u.created_at,
+        })
+        .collect();
+
+    Ok(Json(response))
+}
+
+// ---------------------------------------------------------------------------
+// API: GET /api/admin/assignments
+// ---------------------------------------------------------------------------
+
+async fn api_list_assignments(
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, Response> {
+    let assignments = state.db.list_assignments().map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("Database error: {e}")}))).into_response()
+    })?;
+
+    let response: Vec<AssignmentResponse> = assignments
+        .into_iter()
+        .map(|(a, user_email, identity_pubkey, identity_label)| AssignmentResponse {
+            id: a.id,
+            user_id: a.user_id,
+            identity_id: a.identity_id,
+            user_email,
+            identity_pubkey,
+            identity_label,
+            expires_at: a.expires_at,
+            created_at: a.created_at,
+        })
+        .collect();
+
+    Ok(Json(response))
+}
+
+// ---------------------------------------------------------------------------
+// API: POST /api/admin/assignments
+// ---------------------------------------------------------------------------
+
+async fn api_create_assignment(
+    State(state): State<AppState>,
+    Json(body): Json<CreateAssignmentBody>,
+) -> Result<impl IntoResponse, Response> {
+    // Validate user exists
+    state.db.find_user_by_id(&body.user_id).map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("Database error: {e}")}))).into_response()
+    })?.ok_or_else(|| {
+        (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "User not found"}))).into_response()
+    })?;
+
+    // Validate identity exists
+    state.db.find_identity_by_id(&body.identity_id).map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("Database error: {e}")}))).into_response()
+    })?.ok_or_else(|| {
+        (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "Identity not found"}))).into_response()
+    })?;
+
+    // Parse duration
+    let duration_secs = parse_duration(&body.duration).map_err(|e| {
+        (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": e}))).into_response()
+    })?;
+
+    let now = Utc::now().timestamp();
+    let assignment = Assignment {
+        id: Uuid::new_v4().to_string(),
+        user_id: body.user_id,
+        identity_id: body.identity_id,
+        expires_at: now + duration_secs,
+        created_at: now,
+    };
+
+    state.db.create_assignment(&assignment).map_err(|e| {
+        let err_str = e.to_string();
+        if err_str.contains("UNIQUE constraint failed") {
+            (StatusCode::CONFLICT, Json(serde_json::json!({"error": "Assignment already exists for this user and identity"}))).into_response()
+        } else {
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("Database error: {e}")}))).into_response()
+        }
+    })?;
+
+    Ok((
+        StatusCode::CREATED,
+        Json(serde_json::json!({
+            "id": assignment.id,
+            "user_id": assignment.user_id,
+            "identity_id": assignment.identity_id,
+            "expires_at": assignment.expires_at,
+            "created_at": assignment.created_at,
+        })),
+    ))
+}
+
+// ---------------------------------------------------------------------------
+// API: DELETE /api/admin/assignments/{id}
+// ---------------------------------------------------------------------------
+
+async fn api_delete_assignment(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<impl IntoResponse, Response> {
+    // Find assignment first to get user_id and identity_id for connection cleanup
+    let assignments = state.db.list_assignments().map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("Database error: {e}")}))).into_response()
+    })?;
+
+    let assignment = assignments
+        .into_iter()
+        .find(|(a, _, _, _)| a.id == id)
+        .map(|(a, _, _, _)| a)
+        .ok_or_else(|| {
+            (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "Assignment not found"}))).into_response()
+        })?;
+
+    // Delete related connections first
+    let _ = state.db.delete_connections_for_assignment(&assignment.user_id, &assignment.identity_id).map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("Database error: {e}")}))).into_response()
+    })?;
+
+    // Delete the assignment
+    let deleted = state.db.delete_assignment(&id).map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("Database error: {e}")}))).into_response()
+    })?;
+
+    if deleted {
+        Ok(Json(serde_json::json!({"deleted": true})))
+    } else {
+        Err((StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "Assignment not found"}))).into_response())
+    }
 }
