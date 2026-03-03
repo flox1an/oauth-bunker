@@ -72,7 +72,28 @@ async fn main() {
         crypto,
         oauth,
         bunker_pubkey,
+        nostr_client: bunker.client(),
+        signer_keys: bunker.keys(),
     };
+
+    // Spawn background task to cleanup expired assignments
+    let cleanup_db = state.db.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(300)); // 5 minutes
+        loop {
+            interval.tick().await;
+            match cleanup_db.cleanup_expired_assignments() {
+                Ok(deleted) => {
+                    if deleted > 0 {
+                        tracing::info!(connections_revoked = deleted, "Cleaned up expired assignments");
+                    }
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "Failed to cleanup expired assignments");
+                }
+            }
+        }
+    });
 
     // Build router with embedded static assets
     let serve_assets = static_files::serve_assets();
