@@ -70,8 +70,10 @@ pub fn router() -> Router<AppState> {
         .route("/health", get(health))
         .route("/auth/google", get(auth_google))
         .route("/auth/github", get(auth_github))
+        .route("/auth/microsoft", get(auth_microsoft))
         .route("/auth/google/callback", get(auth_google_callback))
         .route("/auth/github/callback", get(auth_github_callback))
+        .route("/auth/microsoft/callback", get(auth_microsoft_callback))
         .route("/auth/{request_id}", get(auth_popup))
         .route("/api/me", get(api_me))
         .route("/api/connections", get(api_connections))
@@ -180,6 +182,15 @@ async fn auth_github(
     Redirect::temporary(&url)
 }
 
+async fn auth_microsoft(
+    State(state): State<AppState>,
+    Query(params): Query<AuthQuery>,
+) -> impl IntoResponse {
+    let request_id = params.request_id.unwrap_or_default();
+    let url = state.oauth.microsoft_auth_url(&request_id);
+    Redirect::temporary(&url)
+}
+
 // ---------------------------------------------------------------------------
 // OAuth callbacks
 // ---------------------------------------------------------------------------
@@ -210,6 +221,22 @@ async fn auth_github_callback(
         .await
         .map_err(|e| {
             tracing::error!("GitHub OAuth exchange failed: {e}");
+            (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": e}))).into_response()
+        })?;
+
+    handle_oauth_complete(&state, oauth_user, params.state).await
+}
+
+async fn auth_microsoft_callback(
+    State(state): State<AppState>,
+    Query(params): Query<CallbackQuery>,
+) -> Result<Response, Response> {
+    let oauth_user = state
+        .oauth
+        .exchange_microsoft_code(&params.code)
+        .await
+        .map_err(|e| {
+            tracing::error!("Microsoft OAuth exchange failed: {e}");
             (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": e}))).into_response()
         })?;
 

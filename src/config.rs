@@ -10,6 +10,8 @@ pub struct Config {
     pub google_client_secret: String,
     pub github_client_id: String,
     pub github_client_secret: String,
+    pub microsoft_client_id: String,
+    pub microsoft_client_secret: String,
     pub nostr_relays: Vec<String>,
     pub database_url: String,
 }
@@ -49,6 +51,10 @@ impl Config {
                 .map_err(|_| "GITHUB_CLIENT_ID must be set")?,
             github_client_secret: env::var("GITHUB_CLIENT_SECRET")
                 .map_err(|_| "GITHUB_CLIENT_SECRET must be set")?,
+            microsoft_client_id: env::var("MICROSOFT_CLIENT_ID")
+                .map_err(|_| "MICROSOFT_CLIENT_ID must be set")?,
+            microsoft_client_secret: env::var("MICROSOFT_CLIENT_SECRET")
+                .map_err(|_| "MICROSOFT_CLIENT_SECRET must be set")?,
             nostr_relays: relays,
             database_url: env::var("DATABASE_URL")
                 .unwrap_or_else(|_| "oauth-signer.db".into()),

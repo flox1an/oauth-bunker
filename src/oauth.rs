@@ -23,6 +23,7 @@ pub struct OAuthUser {
 pub struct OAuthManager {
     google_client: ConfiguredClient,
     github_client: ConfiguredClient,
+    microsoft_client: ConfiguredClient,
     http_client: reqwest::Client,
 }
 
@@ -40,6 +41,16 @@ struct GitHubUserInfo {
     login: String,
     name: Option<String>,
     avatar_url: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct MicrosoftUserInfo {
+    id: String,
+    #[serde(rename = "displayName")]
+    display_name: Option<String>,
+    mail: Option<String>,
+    #[serde(rename = "userPrincipalName")]
+    user_principal_name: Option<String>,
 }
 
 impl OAuthManager {
@@ -74,6 +85,29 @@ impl OAuthManager {
                     .map_err(|e| format!("Invalid GitHub redirect URL: {e}"))?,
             );
 
+        let microsoft_client =
+            BasicClient::new(ClientId::new(config.microsoft_client_id.clone()))
+                .set_client_secret(ClientSecret::new(
+                    config.microsoft_client_secret.clone(),
+                ))
+                .set_auth_uri(
+                    AuthUrl::new(
+                        "https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize"
+                            .to_string(),
+                    )
+                    .map_err(|e| format!("Invalid Microsoft auth URL: {e}"))?,
+                )
+                .set_token_uri(
+                    TokenUrl::new(
+                        "https://login.microsoftonline.com/consumers/oauth2/v2.0/token".to_string(),
+                    )
+                    .map_err(|e| format!("Invalid Microsoft token URL: {e}"))?,
+                )
+                .set_redirect_uri(
+                    RedirectUrl::new(format!("{}/auth/microsoft/callback", config.public_url))
+                        .map_err(|e| format!("Invalid Microsoft redirect URL: {e}"))?,
+                );
+
         let http_client = reqwest::Client::builder()
             .redirect(redirect::Policy::none())
             .build()
@@ -82,6 +116,7 @@ impl OAuthManager {
         Ok(Self {
             google_client,
             github_client,
+            microsoft_client,
             http_client,
         })
     }
@@ -104,6 +139,19 @@ impl OAuthManager {
             .github_client
             .authorize_url(|| CsrfToken::new(state))
             .add_scope(Scope::new("read:user".to_string()))
+            .url();
+        url.to_string()
+    }
+
+    pub fn microsoft_auth_url(&self, state: &str) -> String {
+        let state = state.to_string();
+        let (url, _csrf) = self
+            .microsoft_client
+            .authorize_url(|| CsrfToken::new(state))
+            .add_scope(Scope::new("openid".to_string()))
+            .add_scope(Scope::new("email".to_string()))
+            .add_scope(Scope::new("profile".to_string()))
+            .add_scope(Scope::new("User.Read".to_string()))
             .url();
         url.to_string()
     }
@@ -166,6 +214,36 @@ impl OAuthManager {
             email: None,
             name: user_info.name.or(Some(user_info.login)),
             avatar_url: user_info.avatar_url,
+        })
+    }
+
+    pub async fn exchange_microsoft_code(&self, code: &str) -> Result<OAuthUser, String> {
+        let token_result = self
+            .microsoft_client
+            .exchange_code(oauth2::AuthorizationCode::new(code.to_string()))
+            .request_async(&self.http_client)
+            .await
+            .map_err(|e| format!("Microsoft token exchange failed: {e}"))?;
+
+        let access_token = token_result.access_token().secret();
+
+        let user_info: MicrosoftUserInfo = self
+            .http_client
+            .get("https://graph.microsoft.com/v1.0/me")
+            .bearer_auth(access_token)
+            .send()
+            .await
+            .map_err(|e| format!("Microsoft user request failed: {e}"))?
+            .json()
+            .await
+            .map_err(|e| format!("Microsoft user parse failed: {e}"))?;
+
+        Ok(OAuthUser {
+            provider: "microsoft".to_string(),
+            sub: user_info.id,
+            email: user_info.mail.or(user_info.user_principal_name),
+            name: user_info.display_name,
+            avatar_url: None,
         })
     }
 }
