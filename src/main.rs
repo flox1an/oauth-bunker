@@ -1,4 +1,5 @@
 mod config;
+mod crypto;
 mod db;
 
 use config::Config;
