@@ -2,13 +2,17 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use nostr_sdk::prelude::*;
+use nostr_sdk::RelayStatus;
 use serde_json::Value;
 use uuid::Uuid;
 use zeroize::Zeroize;
 
+use ::hkdf::Hkdf;
+use ::sha2::Sha256;
+
 use crate::config::Config;
 use crate::crypto::KeyEncryptor;
-use crate::db::{Database, PendingAuth, User};
+use crate::db::{Database, Identity, PendingAuth};
 
 pub struct Bunker {
     signer_keys: Keys,
@@ -24,7 +28,17 @@ impl Bunker {
         crypto: Arc<KeyEncryptor>,
         config: Config,
     ) -> Result<Self, String> {
-        let signer_keys = Keys::generate();
+        // Derive a deterministic keypair from MASTER_KEY so the bunker pubkey
+        // stays stable across restarts (clients cache it in bunker:// URIs).
+        let signer_keys = {
+            let hk = Hkdf::<Sha256>::new(None, &config.master_key);
+            let mut okm = [0u8; 32];
+            hk.expand(b"nostr-bunker-signer-key", &mut okm)
+                .map_err(|e| format!("HKDF expand failed: {e}"))?;
+            let sk = SecretKey::from_slice(&okm)
+                .map_err(|e| format!("Invalid derived secret key: {e}"))?;
+            Keys::new(sk)
+        };
         let client = Client::builder().signer(signer_keys.clone()).build();
 
         for relay in &config.nostr_relays {
@@ -54,6 +68,14 @@ impl Bunker {
         self.signer_keys.public_key
     }
 
+    pub fn client(&self) -> Client {
+        self.client.clone()
+    }
+
+    pub fn keys(&self) -> Keys {
+        self.signer_keys.clone()
+    }
+
     pub async fn run(&self) {
         let filter = Filter::new()
             .kind(Kind::NostrConnect)
@@ -64,29 +86,79 @@ impl Bunker {
             return;
         }
 
-        tracing::info!("Bunker subscribed to NIP-46 events");
+        tracing::info!(
+            bunker_pubkey = %self.signer_keys.public_key.to_hex(),
+            "Bunker subscribed to NIP-46 events"
+        );
+
+        // Spawn a background task to monitor relay connections and reconnect if needed
+        let client_for_health = self.client.clone();
+        let health_handle = tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+                let relays = client_for_health.relays().await;
+                for (url, relay) in &relays {
+                    let status = relay.status();
+                    if status != RelayStatus::Connected {
+                        tracing::warn!(
+                            relay = %url,
+                            status = %status,
+                            "Relay not connected, reconnecting"
+                        );
+                    }
+                }
+                client_for_health.connect().await;
+            }
+        });
 
         let _ = self
             .client
-            .handle_notifications(|notification| async {
-                if let RelayPoolNotification::Event { event, .. } = notification {
-                    if event.kind == Kind::NostrConnect {
-                        if let Err(e) = self.handle_nip46_event(&event).await {
-                            tracing::warn!(
-                                error = %e,
-                                author = %event.pubkey.to_hex(),
-                                "Failed to handle NIP-46 event"
-                            );
+            .handle_notifications(|notification| async move {
+                match &notification {
+                    RelayPoolNotification::Event { event, .. } => {
+                        tracing::info!(
+                            kind = %event.kind,
+                            author = %event.pubkey.to_hex(),
+                            event_id = %event.id.to_hex(),
+                            "Received relay event"
+                        );
+                        if event.kind == Kind::NostrConnect {
+                            if let Err(e) = self.handle_nip46_event(&event).await {
+                                tracing::warn!(
+                                    error = %e,
+                                    author = %event.pubkey.to_hex(),
+                                    "Failed to handle NIP-46 event"
+                                );
+                            }
                         }
+                    }
+                    RelayPoolNotification::Message { relay_url, message } => {
+                        tracing::debug!(
+                            relay = %relay_url,
+                            message = ?message,
+                            "Relay message"
+                        );
+                    }
+                    _ => {
+                        tracing::debug!("Other relay notification: {:?}", notification);
                     }
                 }
                 Ok(false) // never exit
             })
             .await;
+
+        health_handle.abort();
     }
 
     async fn handle_nip46_event(&self, event: &Event) -> Result<(), String> {
+        tracing::info!(
+            author = %event.pubkey.to_hex(),
+            "Decrypting NIP-46 event"
+        );
         let content = self.decrypt_content(event).await?;
+
+        tracing::info!(content = %content, "Decrypted NIP-46 content");
 
         let parsed: Value =
             serde_json::from_str(&content).map_err(|e| format!("Invalid JSON: {e}"))?;
@@ -103,6 +175,13 @@ impl Bunker {
             .unwrap_or_default();
 
         let client_pubkey = event.pubkey;
+
+        tracing::info!(
+            method = %method,
+            id = %id,
+            client = %client_pubkey.to_hex(),
+            "Handling NIP-46 method"
+        );
 
         let response = match method {
             "connect" => self.handle_connect(id, &client_pubkey, &params).await,
@@ -163,6 +242,7 @@ impl Bunker {
             client_pubkey: client_pk_hex,
             relay_url,
             secret,
+            nip46_id: id.to_string(),
             created_at: now,
             expires_at: now + 600, // 10 minutes
         };
@@ -180,8 +260,8 @@ impl Bunker {
         id: &str,
         client_pubkey: &PublicKey,
     ) -> Result<String, String> {
-        let user = self.find_user_by_client(client_pubkey).await?;
-        Ok(nip46_result(id, &user.pubkey))
+        let identity = self.find_identity_by_client(client_pubkey).await?;
+        Ok(nip46_result(id, &identity.pubkey))
     }
 
     async fn handle_sign_event(
@@ -190,26 +270,38 @@ impl Bunker {
         client_pubkey: &PublicKey,
         params: &[Value],
     ) -> Result<String, String> {
-        let user = self.find_user_by_client(client_pubkey).await?;
+        let identity = self.find_identity_by_client(client_pubkey).await?;
 
         let event_json = params
             .first()
             .and_then(|v| v.as_str())
             .ok_or("Missing event JSON param")?;
 
+        // NIP-46 clients may omit `pubkey` from the unsigned event — we need to
+        // inject the identity's pubkey before deserializing.
+        let mut event_value: serde_json::Value =
+            serde_json::from_str(event_json).map_err(|e| format!("Invalid event JSON: {e}"))?;
+        if let Some(obj) = event_value.as_object_mut() {
+            if !obj.contains_key("pubkey") {
+                obj.insert("pubkey".to_string(), serde_json::Value::String(identity.pubkey.clone()));
+            }
+        }
+        let patched_json = serde_json::to_string(&event_value)
+            .map_err(|e| format!("Failed to serialize patched event: {e}"))?;
+
         let unsigned: UnsignedEvent =
-            UnsignedEvent::from_json(event_json).map_err(|e| format!("Invalid unsigned event: {e}"))?;
+            UnsignedEvent::from_json(&patched_json).map_err(|e| format!("Invalid unsigned event: {e}"))?;
 
         let mut secret_bytes = self
             .crypto
-            .decrypt_nsec(&user.id, &user.encrypted_nsec, &user.nonce)?;
+            .decrypt_nsec(&identity.id, &identity.encrypted_nsec, &identity.nonce)?;
 
         let secret_key = SecretKey::from_slice(&secret_bytes)
             .map_err(|e| format!("Invalid secret key: {e}"))?;
-        let user_keys = Keys::new(secret_key);
+        let identity_keys = Keys::new(secret_key);
 
         let signed = unsigned
-            .sign_with_keys(&user_keys)
+            .sign_with_keys(&identity_keys)
             .map_err(|e| format!("Signing failed: {e}"))?;
 
         secret_bytes.zeroize();
@@ -224,7 +316,7 @@ impl Bunker {
         client_pubkey: &PublicKey,
         params: &[Value],
     ) -> Result<String, String> {
-        let user = self.find_user_by_client(client_pubkey).await?;
+        let identity = self.find_identity_by_client(client_pubkey).await?;
 
         let third_party_hex = params
             .first()
@@ -240,7 +332,7 @@ impl Bunker {
 
         let mut secret_bytes = self
             .crypto
-            .decrypt_nsec(&user.id, &user.encrypted_nsec, &user.nonce)?;
+            .decrypt_nsec(&identity.id, &identity.encrypted_nsec, &identity.nonce)?;
         let secret_key = SecretKey::from_slice(&secret_bytes)
             .map_err(|e| format!("Invalid secret key: {e}"))?;
 
@@ -258,7 +350,7 @@ impl Bunker {
         client_pubkey: &PublicKey,
         params: &[Value],
     ) -> Result<String, String> {
-        let user = self.find_user_by_client(client_pubkey).await?;
+        let identity = self.find_identity_by_client(client_pubkey).await?;
 
         let third_party_hex = params
             .first()
@@ -274,7 +366,7 @@ impl Bunker {
 
         let mut secret_bytes = self
             .crypto
-            .decrypt_nsec(&user.id, &user.encrypted_nsec, &user.nonce)?;
+            .decrypt_nsec(&identity.id, &identity.encrypted_nsec, &identity.nonce)?;
         let secret_key = SecretKey::from_slice(&secret_bytes)
             .map_err(|e| format!("Invalid secret key: {e}"))?;
 
@@ -292,7 +384,7 @@ impl Bunker {
         client_pubkey: &PublicKey,
         params: &[Value],
     ) -> Result<String, String> {
-        let user = self.find_user_by_client(client_pubkey).await?;
+        let identity = self.find_identity_by_client(client_pubkey).await?;
 
         let third_party_hex = params
             .first()
@@ -308,7 +400,7 @@ impl Bunker {
 
         let mut secret_bytes = self
             .crypto
-            .decrypt_nsec(&user.id, &user.encrypted_nsec, &user.nonce)?;
+            .decrypt_nsec(&identity.id, &identity.encrypted_nsec, &identity.nonce)?;
         let secret_key = SecretKey::from_slice(&secret_bytes)
             .map_err(|e| format!("Invalid secret key: {e}"))?;
 
@@ -326,7 +418,7 @@ impl Bunker {
         client_pubkey: &PublicKey,
         params: &[Value],
     ) -> Result<String, String> {
-        let user = self.find_user_by_client(client_pubkey).await?;
+        let identity = self.find_identity_by_client(client_pubkey).await?;
 
         let third_party_hex = params
             .first()
@@ -342,7 +434,7 @@ impl Bunker {
 
         let mut secret_bytes = self
             .crypto
-            .decrypt_nsec(&user.id, &user.encrypted_nsec, &user.nonce)?;
+            .decrypt_nsec(&identity.id, &identity.encrypted_nsec, &identity.nonce)?;
         let secret_key = SecretKey::from_slice(&secret_bytes)
             .map_err(|e| format!("Invalid secret key: {e}"))?;
 
@@ -387,22 +479,13 @@ impl Bunker {
         Ok(())
     }
 
-    async fn find_user_by_client(&self, client_pubkey: &PublicKey) -> Result<User, String> {
+    async fn find_identity_by_client(&self, client_pubkey: &PublicKey) -> Result<Identity, String> {
         let client_pk_hex = client_pubkey.to_hex();
 
-        let connections = self
-            .db
-            .list_connections_by_client_pubkey(&client_pk_hex)
-            .map_err(|e| format!("DB error: {e}"))?;
-
-        let connection = connections
-            .first()
-            .ok_or_else(|| "No connection found for this client".to_string())?;
-
         self.db
-            .find_user_by_id(&connection.user_id)
+            .find_identity_by_client_pubkey(&client_pk_hex)
             .map_err(|e| format!("DB error: {e}"))?
-            .ok_or_else(|| "User not found".to_string())
+            .ok_or_else(|| "No identity found for this client".to_string())
     }
 }
 
