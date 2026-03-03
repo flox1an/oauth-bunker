@@ -11,9 +11,6 @@ pub struct User {
     pub id: String,
     pub oauth_provider: String,
     pub oauth_sub: String,
-    pub encrypted_nsec: Vec<u8>,
-    pub nonce: Vec<u8>,
-    pub pubkey: String,
     pub email: Option<String>,
     pub created_at: i64,
 }
@@ -186,14 +183,11 @@ impl Database {
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "INSERT INTO users (id, oauth_provider, oauth_sub, encrypted_nsec, nonce, pubkey, email, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+             VALUES (?1, ?2, ?3, X'00', X'00', '', ?4, ?5)",
             params![
                 user.id,
                 user.oauth_provider,
                 user.oauth_sub,
-                user.encrypted_nsec,
-                user.nonce,
-                user.pubkey,
                 user.email,
                 user.created_at,
             ],
@@ -208,7 +202,7 @@ impl Database {
     ) -> rusqlite::Result<Option<User>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, oauth_provider, oauth_sub, encrypted_nsec, nonce, pubkey, email, created_at
+            "SELECT id, oauth_provider, oauth_sub, email, created_at
              FROM users WHERE oauth_provider = ?1 AND oauth_sub = ?2",
         )?;
         let mut rows = stmt.query_map(params![provider, sub], |row| {
@@ -216,11 +210,8 @@ impl Database {
                 id: row.get(0)?,
                 oauth_provider: row.get(1)?,
                 oauth_sub: row.get(2)?,
-                encrypted_nsec: row.get(3)?,
-                nonce: row.get(4)?,
-                pubkey: row.get(5)?,
-                email: row.get(6)?,
-                created_at: row.get(7)?,
+                email: row.get(3)?,
+                created_at: row.get(4)?,
             })
         })?;
         match rows.next() {
@@ -241,7 +232,7 @@ impl Database {
     pub fn find_user_by_id(&self, id: &str) -> rusqlite::Result<Option<User>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, oauth_provider, oauth_sub, encrypted_nsec, nonce, pubkey, email, created_at
+            "SELECT id, oauth_provider, oauth_sub, email, created_at
              FROM users WHERE id = ?1",
         )?;
         let mut rows = stmt.query_map(params![id], |row| {
@@ -249,11 +240,8 @@ impl Database {
                 id: row.get(0)?,
                 oauth_provider: row.get(1)?,
                 oauth_sub: row.get(2)?,
-                encrypted_nsec: row.get(3)?,
-                nonce: row.get(4)?,
-                pubkey: row.get(5)?,
-                email: row.get(6)?,
-                created_at: row.get(7)?,
+                email: row.get(3)?,
+                created_at: row.get(4)?,
             })
         })?;
         match rows.next() {
@@ -262,25 +250,11 @@ impl Database {
         }
     }
 
-    pub fn update_user_key(
-        &self,
-        user_id: &str,
-        encrypted_nsec: &[u8],
-        nonce: &[u8],
-        pubkey: &str,
-    ) -> rusqlite::Result<()> {
-        let conn = self.conn.lock().unwrap();
-        conn.execute(
-            "UPDATE users SET encrypted_nsec = ?1, nonce = ?2, pubkey = ?3 WHERE id = ?4",
-            params![encrypted_nsec, nonce, pubkey, user_id],
-        )?;
-        Ok(())
-    }
-
     // -----------------------------------------------------------------------
     // Connections
     // -----------------------------------------------------------------------
 
+    #[allow(dead_code)]
     pub fn create_connection(&self, connection: &NipConnection) -> rusqlite::Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
@@ -336,38 +310,6 @@ impl Database {
                 created_at: row.get(4)?,
                 last_used_at: row.get(5)?,
             })
-        })?;
-        rows.collect()
-    }
-
-    /// List all connections for users sharing the same pubkey, with owner info.
-    pub fn list_connections_by_pubkey(
-        &self,
-        pubkey: &str,
-    ) -> rusqlite::Result<Vec<(NipConnection, String, String, Option<String>)>> {
-        let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT c.id, c.user_id, c.client_pubkey, c.relay_url, c.created_at, c.last_used_at,
-                    u.oauth_provider, u.oauth_sub, u.email
-             FROM connections c
-             JOIN users u ON c.user_id = u.id
-             WHERE u.pubkey = ?1
-             ORDER BY c.created_at DESC",
-        )?;
-        let rows = stmt.query_map(params![pubkey], |row| {
-            Ok((
-                NipConnection {
-                    id: row.get(0)?,
-                    user_id: row.get(1)?,
-                    client_pubkey: row.get(2)?,
-                    relay_url: row.get(3)?,
-                    created_at: row.get(4)?,
-                    last_used_at: row.get(5)?,
-                },
-                row.get::<_, String>(6)?,         // oauth_provider
-                row.get::<_, String>(7)?,         // oauth_sub
-                row.get::<_, Option<String>>(8)?, // email
-            ))
         })?;
         rows.collect()
     }

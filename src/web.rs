@@ -53,9 +53,9 @@ struct HealthResponse {
 
 #[derive(Serialize)]
 struct MeResponse {
-    pubkey: String,
-    npub: String,
+    user_id: String,
     oauth_provider: String,
+    email: Option<String>,
     created_at: i64,
     bunker_url: String,
 }
@@ -350,28 +350,12 @@ async fn handle_oauth_complete(
             user
         }
         None => {
-            // Generate new Nostr keys
-            let keys = Keys::generate();
-            let pubkey = keys.public_key().to_hex();
-            let secret_key_bytes = keys.secret_key().as_secret_bytes().to_vec();
-
             let user_id = Uuid::new_v4().to_string();
-
-            let (encrypted_nsec, nonce) = state
-                .crypto
-                .encrypt_nsec(&user_id, &secret_key_bytes)
-                .map_err(|e| {
-                    (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("Encryption error: {e}")}))).into_response()
-                })?;
-
             let now = Utc::now().timestamp();
             let user = User {
                 id: user_id,
                 oauth_provider: oauth_user.provider.clone(),
                 oauth_sub: oauth_user.sub.clone(),
-                encrypted_nsec,
-                nonce,
-                pubkey,
                 email: oauth_user.email.clone(),
                 created_at: now,
             };
@@ -462,12 +446,6 @@ async fn api_me(
 ) -> Result<impl IntoResponse, Response> {
     let user = get_authenticated_user(&state, &headers)?;
 
-    let npub = nostr_sdk::PublicKey::from_hex(&user.pubkey)
-        .map(|pk| pk.to_bech32().unwrap_or_default())
-        .unwrap_or_default();
-
-    // NIP-46: bunker URI uses the remote signer's pubkey, not the user's pubkey.
-    // The client discovers the user's actual pubkey via get_public_key after connecting.
     let bunker_pk = state.bunker_pubkey.read().await;
     let signer_pubkey = bunker_pk.as_deref().unwrap_or_default();
     let relay_params: String = state
@@ -480,9 +458,9 @@ async fn api_me(
     let bunker_url = format!("bunker://{}?{}", signer_pubkey, relay_params);
 
     Ok(Json(MeResponse {
-        pubkey: user.pubkey,
-        npub,
+        user_id: user.id,
         oauth_provider: user.oauth_provider,
+        email: user.email,
         created_at: user.created_at,
         bunker_url,
     }))
@@ -498,22 +476,22 @@ async fn api_connections(
 ) -> Result<impl IntoResponse, Response> {
     let user = get_authenticated_user(&state, &headers)?;
 
-    let connections = state.db.list_connections_by_pubkey(&user.pubkey).map_err(|e| {
+    let connections = state.db.list_connections(&user.id).map_err(|e| {
         (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("Database error: {e}")}))).into_response()
     })?;
 
     let response: Vec<ConnectionResponse> = connections
         .into_iter()
-        .map(|(c, oauth_provider, oauth_sub, email)| ConnectionResponse {
-            is_own: c.user_id == user.id,
+        .map(|c| ConnectionResponse {
+            is_own: true,
             id: c.id,
             client_pubkey: c.client_pubkey,
             relay_url: c.relay_url,
             created_at: c.created_at,
             last_used_at: c.last_used_at,
-            oauth_provider,
-            oauth_sub,
-            created_by_email: email.map(|e| obfuscate_email(&e)),
+            oauth_provider: user.oauth_provider.clone(),
+            oauth_sub: user.oauth_sub.clone(),
+            created_by_email: user.email.as_deref().map(obfuscate_email),
         })
         .collect();
 
