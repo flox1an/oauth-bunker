@@ -58,7 +58,7 @@
       <li><strong>Signing (steady state)</strong> &mdash; Client sends sign_event, bunker decrypts nsec, signs, zeroizes</li>
     </ol>
 
-    <pre><code>Client          Relay          Bunker (LAN)      Web (public)     OAuth
+    <pre><code class="language-plaintext">Client          Relay          Bunker (LAN)      Web (public)     OAuth
   │                │                │                │               │
   │──connect──────►│───────────────►│                │               │
   │                │                │ create         │               │
@@ -95,7 +95,7 @@
     <p><strong>Master key:</strong> A 32-byte random key stored as an environment variable (<code>MASTER_KEY</code>). Never stored in the database.</p>
 
     <p><strong>Key derivation:</strong> Each identity's encryption key is derived from the master key using HKDF-SHA256:</p>
-    <pre><code>identity_key = HKDF-SHA256(salt=identity_id, key=MASTER_KEY)</code></pre>
+    <pre><code class="language-plaintext">identity_key = HKDF-SHA256(salt=identity_id, key=MASTER_KEY)</code></pre>
 
     <p><strong>Encryption:</strong> Each nsec is encrypted with AES-256-GCM using a random 12-byte nonce. The database stores: encrypted blob + nonce + public key. The plaintext nsec is never persisted.</p>
 

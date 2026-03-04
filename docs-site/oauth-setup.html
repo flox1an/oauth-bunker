@@ -74,7 +74,7 @@
       </li>
       <li>Copy credentials:</li>
     </ol>
-    <pre><code class="language-env">GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
+    <pre><code class="language-ini">GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
 GOOGLE_CLIENT_SECRET=your-client-secret</code></pre>
 
     <h2>GitHub</h2>
@@ -93,7 +93,7 @@ GOOGLE_CLIENT_SECRET=your-client-secret</code></pre>
       <li>Generate a new client secret (only shown once &mdash; save immediately)</li>
       <li>Copy credentials:</li>
     </ol>
-    <pre><code class="language-env">GITHUB_CLIENT_ID=your-client-id
+    <pre><code class="language-ini">GITHUB_CLIENT_ID=your-client-id
 GITHUB_CLIENT_SECRET=your-client-secret</code></pre>
 
     <h2>Microsoft</h2>
@@ -113,7 +113,7 @@ GITHUB_CLIENT_SECRET=your-client-secret</code></pre>
       <li>API permissions should have: <code>openid</code>, <code>email</code>, <code>profile</code>, <code>User.Read</code> (usually default)</li>
       <li>Copy credentials:</li>
     </ol>
-    <pre><code class="language-env">MICROSOFT_CLIENT_ID=your-application-client-id
+    <pre><code class="language-ini">MICROSOFT_CLIENT_ID=your-application-client-id
 MICROSOFT_CLIENT_SECRET=your-client-secret-value</code></pre>
     <p><strong>Tenant configuration</strong>: The app uses the <code>consumers</code> tenant (personal accounts only). To change: modify auth/token URLs in <code>src/oauth.rs</code>. Options: <code>consumers</code>, <code>organizations</code>, <code>common</code>.</p>
 
@@ -155,7 +155,7 @@ print(token)
     <ol start="7">
       <li>Copy credentials:</li>
     </ol>
-    <pre><code class="language-env">APPLE_CLIENT_ID=com.yourdomain.oauthsigner.web
+    <pre><code class="language-ini">APPLE_CLIENT_ID=com.yourdomain.oauthsigner.web
 APPLE_CLIENT_SECRET=&lt;generated JWT&gt;</code></pre>
     <p><strong>Note</strong>: Apple requires HTTPS for redirect URIs, even in development. Use a tunneling service like ngrok or configure a local TLS proxy.</p>
 
@@ -163,7 +163,7 @@ APPLE_CLIENT_SECRET=&lt;generated JWT&gt;</code></pre>
     <p>Generate a 32-byte random key:</p>
     <pre><code class="language-bash">openssl rand -hex 32</code></pre>
     <p>Add to <code>.env</code>:</p>
-    <pre><code class="language-env">MASTER_KEY=your-64-character-hex-string</code></pre>
+    <pre><code class="language-ini">MASTER_KEY=your-64-character-hex-string</code></pre>
     <p>This encrypts all stored Nostr private keys (nsecs) at rest. Keep it secure and backed up. Losing it means losing access to all stored keys.</p>
   </main>
 
