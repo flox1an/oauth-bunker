@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Production Deployment - Nostr OAuth Signer Docs</title>
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+</head>
+<body>
+  <button id="menu-toggle" aria-label="Toggle navigation">
+    <span></span><span></span><span></span>
+  </button>
+
+  <div id="sidebar"></div>
+
+  <main>
+    <div class="top-bar">
+      <button id="theme-toggle">Toggle Theme</button>
+    </div>
+
+    <h1>Production Deployment</h1>
+    <p>There are two deployment models: <strong>monolithic</strong> (single server) and <strong>split</strong> (bunker + web service). Both can use Cloudflare Tunnel to securely expose your service to the internet without opening ports.</p>
+
+    <h2>Deployment Models</h2>
+    <p><strong>Monolithic</strong> runs everything on a single server &mdash; the bunker, web UI, OAuth flows, and admin API all in one process. This is simpler to set up and suitable for personal use or small teams.</p>
+    <p><strong>Split</strong> separates the bunker (which holds signing keys) from the internet-facing web service. This is more secure for production because a compromised web server never has access to NSECs. See <a href="#split-architecture">Split Architecture</a> below for details.</p>
+
+    <h2>Monolithic Deployment</h2>
+    <ul>
+      <li>A single server runs the bunker, web UI, OAuth, and admin API in one process.</li>
+      <li>Suitable for personal use or small teams.</li>
+      <li>Use a reverse proxy (such as Cloudflare Tunnel) to expose only the routes that need to be public.</li>
+      <li>Admin routes (<code>/api/admin/*</code>) should stay LAN-only &mdash; never expose them to the internet.</li>
+    </ul>
+
+    <h2>Cloudflare Tunnel Setup</h2>
+    <p>Cloudflare Tunnel lets you expose your local server to the internet without opening firewall ports. It creates an outbound-only connection from your server to Cloudflare's edge.</p>
+
+    <h3>Install cloudflared</h3>
+    <pre><code class="language-bash">brew install cloudflared</code></pre>
+
+    <h3>Create the tunnel</h3>
+    <pre><code class="language-bash">cloudflared tunnel login
+cloudflared tunnel create bunker-demo
+cloudflared tunnel route dns bunker-demo bunker.yourdomain.com</code></pre>
+
+    <h3>Configure selective routing</h3>
+    <p>Create <code>~/.cloudflared/config.yml</code> to control which routes are exposed:</p>
+    <pre><code class="language-yaml">tunnel: &lt;YOUR_TUNNEL_ID&gt;
+credentials-file: /home/user/.cloudflared/&lt;YOUR_TUNNEL_ID&gt;.json
+
+ingress:
+  # Block admin routes — keep these LAN-only
+  - hostname: bunker.yourdomain.com
+    path: /api/admin.*
+    service: http_status:404
+
+  # OAuth flow
+  - hostname: bunker.yourdomain.com
+    path: /auth.*
+    service: http://localhost:3000
+
+  # Auth popup (user picks identity after OAuth)
+  - hostname: bunker.yourdomain.com
+    path: /auth-popup.*
+    service: http://localhost:3000
+
+  # Web UI assets
+  - hostname: bunker.yourdomain.com
+    path: /assets.*
+    service: http://localhost:3000
+
+  # API endpoints needed by the web UI
+  - hostname: bunker.yourdomain.com
+    path: /api/me
+    service: http://localhost:3000
+  - hostname: bunker.yourdomain.com
+    path: /api/select-identity
+    service: http://localhost:3000
+  - hostname: bunker.yourdomain.com
+    path: /api/identities
+    service: http://localhost:3000
+
+  # NIP-89 discovery
+  - hostname: bunker.yourdomain.com
+    path: /.well-known/nostr.json
+    service: http://localhost:3000
+
+  # SPA index
+  - hostname: bunker.yourdomain.com
+    path: /
+    service: http://localhost:3000
+
+  # Block everything else
+  - service: http_status:404</code></pre>
+
+    <h3>Update environment</h3>
+    <p>Set <code>PUBLIC_URL=https://bunker.yourdomain.com</code> in your <code>.env</code> file. Then update the OAuth callback URLs in each provider's dashboard to match (e.g., <code>https://bunker.yourdomain.com/auth/google/callback</code>).</p>
+
+    <h3>Run</h3>
+    <pre><code class="language-bash">cargo run
+# In another terminal:
+cloudflared tunnel run bunker-demo</code></pre>
+
+    <h2>Routes: Exposed vs Hidden</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Route</th>
+          <th>Exposed</th>
+          <th>Purpose</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>/auth/*</code></td>
+          <td>Yes</td>
+          <td>OAuth initiation and callbacks</td>
+        </tr>
+        <tr>
+          <td><code>/auth-popup/*</code></td>
+          <td>Yes</td>
+          <td>Identity selection after OAuth</td>
+        </tr>
+        <tr>
+          <td><code>/api/me</code></td>
+          <td>Yes</td>
+          <td>Current user info for web UI</td>
+        </tr>
+        <tr>
+          <td><code>/api/select-identity</code></td>
+          <td>Yes</td>
+          <td>Identity picker for auth flow</td>
+        </tr>
+        <tr>
+          <td><code>/api/identities</code></td>
+          <td>Yes</td>
+          <td>List available identities</td>
+        </tr>
+        <tr>
+          <td><code>/.well-known/nostr.json</code></td>
+          <td>Yes</td>
+          <td>NIP-89 bunker discovery</td>
+        </tr>
+        <tr>
+          <td><code>/assets/*</code></td>
+          <td>Yes</td>
+          <td>Static frontend assets</td>
+        </tr>
+        <tr>
+          <td><code>/api/admin/*</code></td>
+          <td><strong>No</strong></td>
+          <td>Identity &amp; user management</td>
+        </tr>
+        <tr>
+          <td><code>/api/connections</code></td>
+          <td><strong>No</strong></td>
+          <td>Connection management</td>
+        </tr>
+        <tr>
+          <td>NIP-46 bunker</td>
+          <td><strong>No</strong></td>
+          <td>Outbound relay connections only</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2 id="split-architecture">Split Architecture</h2>
+    <p>For production deployments, separate the bunker from the web service. This ensures that signing keys are never accessible from the internet-facing server.</p>
+    <ul>
+      <li><strong>Bunker (LAN-only)</strong>: Holds NSECs and MASTER_KEY, handles NIP-46 signing, serves the admin API.</li>
+      <li><strong>Web Service (internet-facing)</strong>: Handles OAuth flows, session management, and the identity picker UI.</li>
+      <li><strong>Shared SQLite DB (LAN)</strong>: A single database on the LAN acts as the source of truth for both services.</li>
+    </ul>
+
+    <h3>Data Ownership</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>Data</th>
+          <th>Bunker</th>
+          <th>Web Service</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>NSECs / MASTER_KEY</td>
+          <td>Yes</td>
+          <td><strong>No</strong></td>
+        </tr>
+        <tr>
+          <td>Identity pubkeys + labels</td>
+          <td>Yes (owns)</td>
+          <td>Yes (read-only)</td>
+        </tr>
+        <tr>
+          <td>User-identity assignments</td>
+          <td>Yes (owns)</td>
+          <td>Yes (read-only)</td>
+        </tr>
+        <tr>
+          <td>OAuth credentials</td>
+          <td>No</td>
+          <td>Yes</td>
+        </tr>
+        <tr>
+          <td>Users / sessions</td>
+          <td>No</td>
+          <td>Yes (owns)</td>
+        </tr>
+        <tr>
+          <td>Pending auth requests</td>
+          <td>Yes (owns)</td>
+          <td>No</td>
+        </tr>
+        <tr>
+          <td>Connections</td>
+          <td>Yes (owns)</td>
+          <td>No</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>Security Properties</h3>
+    <ul>
+      <li>NSECs exist only in the bunker process on the LAN.</li>
+      <li>The bunker has zero inbound network connections &mdash; it connects outbound to relays only.</li>
+      <li>The web service never sees signing keys.</li>
+      <li>Only one relay message passes between services: an encrypted approval event (NIP-44).</li>
+      <li>Compromise of the web service leaks OAuth sessions but <strong>not</strong> NSECs.</li>
+    </ul>
+    <p>See <a href="architecture.html">Architecture</a> for detailed data flow diagrams.</p>
+
+    <h2>Security Checklist</h2>
+    <ul>
+      <li><input type="checkbox" disabled> <code>MASTER_KEY</code> backed up securely (not in version control)</li>
+      <li><input type="checkbox" disabled> Admin routes (<code>/api/admin/*</code>) not exposed to the internet</li>
+      <li><input type="checkbox" disabled> HTTPS on the public-facing service</li>
+      <li><input type="checkbox" disabled> OAuth callback URLs match <code>PUBLIC_URL</code> exactly</li>
+      <li><input type="checkbox" disabled> Firewall rules prevent direct access to the bunker from the internet</li>
+      <li><input type="checkbox" disabled> Database file permissions restrict access</li>
+      <li><input type="checkbox" disabled> Regular backups of database and <code>MASTER_KEY</code></li>
+    </ul>
+  </main>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="js/nav.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>

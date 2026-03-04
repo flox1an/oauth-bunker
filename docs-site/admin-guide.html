@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin Guide - Nostr OAuth Signer Docs</title>
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+</head>
+<body>
+  <button id="menu-toggle" aria-label="Toggle navigation">
+    <span></span><span></span><span></span>
+  </button>
+
+  <div id="sidebar"></div>
+
+  <main>
+    <div class="top-bar">
+      <button id="theme-toggle">Toggle Theme</button>
+    </div>
+
+    <h1>Admin Guide</h1>
+    <p>The admin dashboard lets you manage Nostr identities, users, and access assignments. Admin routes are at <code>/api/admin/*</code> and should only be accessible from your LAN.</p>
+
+    <h2>Accessing the Admin Panel</h2>
+    <ul>
+      <li>Navigate to <code>http://localhost:3000</code> (or your LAN IP)</li>
+      <li>The admin page is at the <code>/admin</code> route in the web UI</li>
+      <li>In split architecture, admin endpoints only exist on the bunker (LAN-only)</li>
+      <li>Admin API routes: <code>/api/admin/identities</code>, <code>/api/admin/users</code>, <code>/api/admin/assignments</code></li>
+    </ul>
+
+    <h2>Managing Identities</h2>
+
+    <h3>Adding an identity</h3>
+    <ul>
+      <li>Click "Add Identity" in the admin panel</li>
+      <li>Paste a Nostr nsec (bech32 format, starts with <code>nsec1...</code>)</li>
+      <li>Optionally add a label (e.g., "Blog", "Personal", "Work")</li>
+      <li>The nsec is immediately encrypted with AES-256-GCM</li>
+      <li>Encryption uses a key derived from <code>MASTER_KEY</code> via HKDF-SHA256</li>
+      <li>The plaintext nsec is never stored &mdash; only the encrypted blob and nonce</li>
+    </ul>
+
+    <h3>Viewing identities</h3>
+    <ul>
+      <li>Each identity shows: public key (npub format), label, creation date, active connection count</li>
+      <li>The npub can be shared &mdash; it's the public identifier for the Nostr identity</li>
+    </ul>
+
+    <h3>Deleting an identity</h3>
+    <ul>
+      <li>Removes the encrypted nsec from the database</li>
+      <li>Disconnects all active NIP-46 connections using that identity</li>
+      <li>Removes all user assignments for that identity</li>
+      <li>This action is irreversible &mdash; make sure you have the nsec backed up elsewhere</li>
+    </ul>
+
+    <h2>Managing Users</h2>
+    <ul>
+      <li>Users are created automatically when they first sign in via OAuth</li>
+      <li>Each user has: ID, OAuth provider (Google/GitHub/Microsoft/Apple), email, avatar URL, creation date</li>
+      <li>The admin panel shows all registered users</li>
+      <li>Users cannot be created manually &mdash; they must authenticate via OAuth</li>
+    </ul>
+
+    <h2>Identity Assignments</h2>
+
+    <h3>Creating an assignment</h3>
+    <ul>
+      <li>Select a user and an identity to assign</li>
+      <li>Choose a duration: 1 day, 1 week, 1 month, 6 months, or 1 year</li>
+      <li>The user can now select this identity when connecting via NIP-46</li>
+    </ul>
+
+    <h3>How assignments work</h3>
+    <ul>
+      <li>Users can only see and use identities they're assigned to</li>
+      <li>When a user authenticates via OAuth and reaches the identity picker, only their assigned (non-expired) identities appear</li>
+      <li>Assignment expiration is enforced at signing time &mdash; the bunker checks before signing each event</li>
+      <li>A background task runs every 5 minutes to clean up expired assignments</li>
+    </ul>
+
+    <h3>Revoking access</h3>
+    <ul>
+      <li>Delete the assignment in the admin panel to immediately revoke</li>
+      <li>The user will no longer see the identity in their picker</li>
+      <li>Existing NIP-46 connections using that identity will fail at next signing attempt</li>
+    </ul>
+
+    <h2>Monitoring Connections</h2>
+    <ul>
+      <li>View active NIP-46 connections per identity</li>
+      <li>Each connection shows: client public key, relay URL, creation date, last used timestamp</li>
+      <li>Connections represent active Nostr client sessions (e.g., Habla, Amethyst)</li>
+      <li>Connections can be viewed at <code>/api/connections</code></li>
+    </ul>
+
+    <h2>Common Admin Tasks</h2>
+
+    <h3>Onboarding a new user</h3>
+    <ol>
+      <li>Have the user sign in via any OAuth provider</li>
+      <li>Find them in the Users list</li>
+      <li>Create assignments for the identities they should access</li>
+      <li>Share the bunker connection string (bunker URI) with them</li>
+    </ol>
+
+    <h3>Rotating an identity</h3>
+    <ol>
+      <li>Generate a new nsec externally</li>
+      <li>Add the new identity in admin</li>
+      <li>Reassign affected users to the new identity</li>
+      <li>Delete the old identity (disconnects all sessions)</li>
+    </ol>
+
+    <h3>Emergency revocation</h3>
+    <ol>
+      <li>Delete the identity's assignments to block new connections</li>
+      <li>Or delete the identity entirely to disconnect all sessions immediately</li>
+    </ol>
+  </main>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="js/nav.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>

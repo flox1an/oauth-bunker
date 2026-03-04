@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Troubleshooting - Nostr OAuth Signer Docs</title>
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+</head>
+<body>
+  <button id="menu-toggle" aria-label="Toggle navigation">
+    <span></span><span></span><span></span>
+  </button>
+
+  <div id="sidebar"></div>
+
+  <main>
+    <div class="top-bar">
+      <button id="theme-toggle">Toggle Theme</button>
+    </div>
+
+    <h1>Troubleshooting</h1>
+    <p>Common issues and how to resolve them.</p>
+
+    <h2>Startup Errors</h2>
+
+    <p><strong>"MASTER_KEY must be set"</strong></p>
+    <ul>
+      <li>The <code>MASTER_KEY</code> environment variable is missing from your <code>.env</code> file</li>
+      <li>Generate one:
+        <pre><code class="language-bash">openssl rand -hex 32</code></pre>
+      </li>
+    </ul>
+
+    <p><strong>"MASTER_KEY must be 32 bytes"</strong></p>
+    <ul>
+      <li>The key must be exactly 64 hex characters (32 bytes)</li>
+      <li>Check for accidental spaces or line breaks</li>
+    </ul>
+
+    <p><strong>"MASTER_KEY must be valid hex"</strong></p>
+    <ul>
+      <li>The key contains non-hex characters</li>
+      <li>Only use characters 0-9 and a-f</li>
+    </ul>
+
+    <p><strong>"GOOGLE_CLIENT_ID must be set" (or any OAuth var)</strong></p>
+    <ul>
+      <li>All OAuth provider variables are required, even if you don't use that provider</li>
+      <li>Set unused providers to empty strings or placeholder values</li>
+    </ul>
+
+    <p><strong>"Failed to bind to address"</strong></p>
+    <ul>
+      <li>The port is already in use: check with <code>lsof -i :3000</code></li>
+      <li>Or the <code>HOST</code> address is invalid</li>
+    </ul>
+
+    <h2>OAuth Errors</h2>
+
+    <p><strong>"Redirect URI mismatch" / "redirect_uri_mismatch"</strong></p>
+    <ul>
+      <li>The <code>PUBLIC_URL</code> in your <code>.env</code> doesn't match what's configured in the OAuth provider's dashboard</li>
+      <li>Check that the callback URL is exactly <code>{PUBLIC_URL}/auth/{provider}/callback</code></li>
+      <li>Common issue: using <code>http://</code> in the provider but <code>https://</code> in PUBLIC_URL (or vice versa)</li>
+    </ul>
+
+    <p><strong>"Invalid client" / "unauthorized_client"</strong></p>
+    <ul>
+      <li>Wrong client ID or client secret</li>
+      <li>For GitHub: the secret is only shown once &mdash; regenerate if lost</li>
+      <li>For Microsoft: make sure you copied the secret Value, not the Secret ID</li>
+    </ul>
+
+    <p><strong>Apple OAuth fails in development</strong></p>
+    <ul>
+      <li>Apple requires HTTPS for redirect URIs, even locally</li>
+      <li>Use a tunneling service (ngrok, Cloudflare Tunnel) or configure local TLS</li>
+    </ul>
+
+    <p><strong>OAuth works but user isn't created</strong></p>
+    <ul>
+      <li>Check logs:
+        <pre><code class="language-bash">RUST_LOG=oauth_signer=debug cargo run</code></pre>
+      </li>
+      <li>The OAuth provider may not be returning an email address</li>
+      <li>Verify the OAuth scopes include <code>email</code> and <code>profile</code></li>
+    </ul>
+
+    <h2>Relay Connection Issues</h2>
+
+    <p><strong>Bunker can't connect to relays</strong></p>
+    <ul>
+      <li>Check <code>NOSTR_RELAYS</code> in your <code>.env</code> &mdash; URLs must start with <code>wss://</code></li>
+      <li>Verify network connectivity:
+        <pre><code class="language-bash">curl -I https://relay.damus.io</code></pre>
+      </li>
+      <li>Check firewall rules allow outbound WebSocket connections on port 443</li>
+    </ul>
+
+    <p><strong>Clients can't find the bunker</strong></p>
+    <ul>
+      <li>Verify the bunker pubkey is correct in the client's connection string</li>
+      <li>Ensure client and bunker are using at least one common relay</li>
+      <li>Check that the bunker is running and connected: look for relay connection logs</li>
+    </ul>
+
+    <p><strong>Connection established but signing fails</strong></p>
+    <ul>
+      <li>Check if the user's identity assignment has expired</li>
+      <li>Verify the identity still exists in the database</li>
+      <li>Check logs for specific signing errors</li>
+    </ul>
+
+    <h2>Database Issues</h2>
+
+    <p><strong>"unable to open database file"</strong></p>
+    <ul>
+      <li>Check that the <code>DATABASE_URL</code> path is writable</li>
+      <li>Ensure the parent directory exists</li>
+      <li>Check file permissions</li>
+    </ul>
+
+    <p><strong>Database appears corrupted</strong></p>
+    <ul>
+      <li>SQLite uses WAL (Write-Ahead Logging) journal mode</li>
+      <li>Look for <code>.db-wal</code> and <code>.db-shm</code> files alongside the main database</li>
+      <li>Do not delete these files while the server is running</li>
+      <li>If corrupted, try:
+        <pre><code class="language-bash">sqlite3 oauth-signer.db "PRAGMA integrity_check;"</code></pre>
+      </li>
+    </ul>
+
+    <h2>Assignment Issues</h2>
+
+    <p><strong>User can't see any identities in the picker</strong></p>
+    <ul>
+      <li>Check that active (non-expired) assignments exist for the user</li>
+      <li>Verify in admin panel: user ID matches and expiry is in the future</li>
+      <li>The background cleanup runs every 5 minutes &mdash; an assignment may have just expired</li>
+    </ul>
+
+    <p><strong>Signing fails with "assignment expired"</strong></p>
+    <ul>
+      <li>The identity assignment has expired since the connection was established</li>
+      <li>Create a new assignment in the admin panel with a longer duration</li>
+      <li>The user may need to reconnect after assignment renewal</li>
+    </ul>
+
+    <h2>Debugging Tips</h2>
+
+    <p><strong>Enable verbose logging:</strong></p>
+    <pre><code class="language-bash">RUST_LOG=oauth_signer=debug cargo run</code></pre>
+
+    <p><strong>Very verbose (includes HTTP requests):</strong></p>
+    <pre><code class="language-bash">RUST_LOG=oauth_signer=trace,tower_http=debug cargo run</code></pre>
+
+    <p><strong>Logs are structured JSON</strong> &mdash; pipe through <code>jq</code> for readability:</p>
+    <pre><code class="language-bash">RUST_LOG=info cargo run 2>&1 | jq .</code></pre>
+
+    <p><strong>Test OAuth flow manually:</strong></p>
+    <ul>
+      <li>Visit <code>http://localhost:3000/auth/google</code> (or github/microsoft/apple) directly</li>
+      <li>Check that the redirect goes to the right OAuth provider</li>
+      <li>After callback, check logs for user creation</li>
+    </ul>
+
+    <p><strong>Check database state:</strong></p>
+    <pre><code class="language-bash">sqlite3 oauth-signer.db "SELECT id, email, oauth_provider FROM users;"
+sqlite3 oauth-signer.db "SELECT id, label, pubkey FROM identities;"
+sqlite3 oauth-signer.db "SELECT a.id, u.email, i.label, a.expires_at FROM user_identity_assignments a JOIN users u ON a.user_id = u.id JOIN identities i ON a.identity_id = i.id;"</code></pre>
+  </main>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="js/nav.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>

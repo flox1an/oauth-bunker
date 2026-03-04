@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Architecture - Nostr OAuth Signer Docs</title>
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+</head>
+<body>
+  <button id="menu-toggle" aria-label="Toggle navigation">
+    <span></span><span></span><span></span>
+  </button>
+
+  <div id="sidebar"></div>
+
+  <main>
+    <div class="top-bar">
+      <button id="theme-toggle">Toggle Theme</button>
+    </div>
+
+    <h1>Architecture</h1>
+    <p>The Nostr OAuth Signer bridges traditional OAuth authentication with Nostr's cryptographic identity model. It combines an OAuth gateway, an encrypted key vault, and a NIP-46 bunker.</p>
+
+    <h2>System Overview</h2>
+    <p>Three core components:</p>
+    <ol>
+      <li><strong>OAuth Gateway</strong> &mdash; Handles authentication with Google, GitHub, Microsoft, Apple. Creates user sessions.</li>
+      <li><strong>Encrypted Key Vault</strong> &mdash; Stores Nostr private keys (nsecs) encrypted with AES-256-GCM. Keys derived via HKDF from a master key.</li>
+      <li><strong>NIP-46 Bunker</strong> &mdash; Implements the Nostr Connect protocol for remote signing. Clients connect via relays.</li>
+    </ol>
+
+    <h2>NIP-46 Bunker Protocol</h2>
+    <p>NIP-46 (Nostr Connect) allows Nostr clients to request signing operations from a remote signer (bunker) without the client ever seeing the private key.</p>
+
+    <p><strong>Supported methods:</strong></p>
+    <ul>
+      <li><code>connect</code> &mdash; Establish a new connection</li>
+      <li><code>sign_event</code> &mdash; Sign a Nostr event</li>
+      <li><code>get_public_key</code> &mdash; Get the identity's public key</li>
+      <li><code>get_relays</code> &mdash; Get relay list</li>
+      <li><code>nip44_encrypt</code> &mdash; NIP-44 encryption</li>
+      <li><code>nip04_encrypt</code> &mdash; NIP-04 encryption (legacy)</li>
+    </ul>
+
+    <p><strong>How clients connect:</strong> Clients use a bunker URI containing the bunker's public key and relay URLs. When connecting, the bunker responds with an auth URL that redirects the user through OAuth.</p>
+
+    <h2>Connection Flow</h2>
+    <p>Step-by-step flow when a Nostr client (e.g., Habla) connects:</p>
+    <ol>
+      <li><strong>Client requests connection</strong> &mdash; Sends NIP-46 connect request to bunker pubkey via relay</li>
+      <li><strong>Bunker responds with auth URL</strong> &mdash; Returns URL pointing to web service (e.g., <code>https://web.example.com/auth/abc123</code>)</li>
+      <li><strong>User authenticates</strong> &mdash; Browser opens auth URL, redirects to OAuth provider, user logs in</li>
+      <li><strong>Session created</strong> &mdash; OAuth callback creates/finds user, sets session cookie</li>
+      <li><strong>Identity selection</strong> &mdash; Web service shows identity picker with user's assigned identities</li>
+      <li><strong>Approval sent</strong> &mdash; Web service sends encrypted approval event to bunker via relay</li>
+      <li><strong>Connection established</strong> &mdash; Bunker stores connection, replies with ack to client</li>
+      <li><strong>Signing (steady state)</strong> &mdash; Client sends sign_event, bunker decrypts nsec, signs, zeroizes</li>
+    </ol>
+
+    <pre><code>Client          Relay          Bunker (LAN)      Web (public)     OAuth
+  │                │                │                │               │
+  │──connect──────►│───────────────►│                │               │
+  │                │                │ create         │               │
+  │                │                │ pending_auth   │               │
+  │◄──auth_url─────│◄───────────────│                │               │
+  │                │                │                │               │
+  │ open browser   │                │                │               │
+  │───────────────────────────────────────────────►│               │
+  │                │                │    redirect   │               │
+  │                │                │                │──────────────►│
+  │                │                │                │◄─────callback─│
+  │                │                │                │ exchange code │
+  │                │                │                │ create user   │
+  │                │                │                │ show picker   │
+  │                │                │                │               │
+  │                │                │  Alice picks   │               │
+  │                │                │  identity      │               │
+  │                │  approval      │◄───────────────│               │
+  │                │◄───────────────│                │               │
+  │                │                │ store          │               │
+  │                │                │ connection     │               │
+  │◄──ack──────────│◄───────────────│                │               │
+  │                │                │                │               │
+  │  connected     │                │                │               │
+  │                │                │                │               │
+  │──sign_event───►│───────────────►│                │               │
+  │                │                │ decrypt nsec   │               │
+  │                │                │ sign           │               │
+  │                │                │ zeroize        │               │
+  │◄──signed───────│◄───────────────│                │               │</code></pre>
+
+    <h2>Key Encryption Model</h2>
+
+    <p><strong>Master key:</strong> A 32-byte random key stored as an environment variable (<code>MASTER_KEY</code>). Never stored in the database.</p>
+
+    <p><strong>Key derivation:</strong> Each identity's encryption key is derived from the master key using HKDF-SHA256:</p>
+    <pre><code>identity_key = HKDF-SHA256(salt=identity_id, key=MASTER_KEY)</code></pre>
+
+    <p><strong>Encryption:</strong> Each nsec is encrypted with AES-256-GCM using a random 12-byte nonce. The database stores: encrypted blob + nonce + public key. The plaintext nsec is never persisted.</p>
+
+    <p><strong>Signing flow:</strong></p>
+    <ol>
+      <li>Client sends sign_event request</li>
+      <li>Bunker retrieves encrypted nsec from database</li>
+      <li>Derives decryption key: <code>HKDF(MASTER_KEY, identity_id)</code></li>
+      <li>Decrypts nsec in memory</li>
+      <li>Signs the event</li>
+      <li>Zeroizes (securely erases) the plaintext nsec from memory</li>
+      <li>Returns signed event</li>
+    </ol>
+
+    <h2>Database Schema</h2>
+    <p>Overview (not full DDL):</p>
+
+    <p><strong>users</strong> &mdash; OAuth user accounts</p>
+    <ul>
+      <li><code>id</code> (UUID), <code>oauth_provider</code>, <code>oauth_sub</code>, <code>email</code>, <code>avatar_url</code>, <code>created_at</code></li>
+      <li>Unique on (provider, sub)</li>
+    </ul>
+
+    <p><strong>identities</strong> &mdash; Nostr keypairs (encrypted)</p>
+    <ul>
+      <li><code>id</code> (UUID), <code>encrypted_nsec</code> (blob), <code>nonce</code> (blob), <code>pubkey</code> (unique), <code>label</code>, <code>created_at</code></li>
+    </ul>
+
+    <p><strong>user_identity_assignments</strong> &mdash; Maps users to identities with expiration</p>
+    <ul>
+      <li><code>id</code> (UUID), <code>user_id</code> &rarr; users, <code>identity_id</code> &rarr; identities, <code>expires_at</code>, <code>created_at</code></li>
+    </ul>
+
+    <p><strong>connections</strong> &mdash; Active NIP-46 sessions</p>
+    <ul>
+      <li><code>id</code>, <code>user_id</code>, <code>client_pubkey</code>, <code>relay_url</code>, <code>created_at</code>, <code>last_used_at</code></li>
+    </ul>
+
+    <p><strong>sessions</strong> &mdash; OAuth web sessions</p>
+    <ul>
+      <li><code>token</code> (primary key), <code>user_id</code>, <code>expires_at</code></li>
+    </ul>
+
+    <p><strong>pending_auth</strong> &mdash; Transient connection requests</p>
+    <ul>
+      <li><code>request_id</code>, <code>client_pubkey</code>, <code>relay_url</code>, <code>nip46_id</code>, <code>created_at</code>, <code>expires_at</code></li>
+    </ul>
+
+    <h2>Security Properties</h2>
+    <p>Key security guarantees:</p>
+    <ul>
+      <li>NSECs are encrypted at rest, decrypted only in bunker memory during signing, then zeroized</li>
+      <li>In split architecture, NSECs never leave the LAN</li>
+      <li>The web service never sees or handles signing keys</li>
+      <li>Assignment expiration is enforced at signing time (not just at connection time)</li>
+      <li>OAuth sessions are separate from NIP-46 connections &mdash; compromising one doesn't compromise the other</li>
+      <li>Admin endpoints only exist on the bunker, which is LAN-only</li>
+      <li>The only message between web service and bunker is a single encrypted approval event (NIP-44)</li>
+    </ul>
+  </main>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="js/nav.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>
