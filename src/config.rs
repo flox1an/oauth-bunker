@@ -16,6 +16,7 @@ pub struct Config {
     pub apple_client_secret: String,
     pub nostr_relays: Vec<String>,
     pub database_url: String,
+    pub admin_pubkeys: Vec<String>,
 }
 
 impl Config {
@@ -34,6 +35,13 @@ impl Config {
             .unwrap_or_else(|_| "wss://relay.nsec.app,wss://relay.damus.io,wss://nos.lol".into())
             .split(',')
             .map(|s| s.trim().to_string())
+            .collect();
+
+        let admin_pubkeys: Vec<String> = env::var("ADMIN_PUBKEYS")
+            .unwrap_or_default()
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
             .collect();
 
         Ok(Config {
@@ -64,6 +72,7 @@ impl Config {
             nostr_relays: relays,
             database_url: env::var("DATABASE_URL")
                 .unwrap_or_else(|_| "oauth-signer.db".into()),
+            admin_pubkeys,
         })
     }
 }
