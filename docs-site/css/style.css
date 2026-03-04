@@ -1,0 +1,993 @@
+/* ============================================================
+   Nostr OAuth Signer - Documentation Site Styles
+   ============================================================
+   Dark-first design with light mode override.
+   Layout: fixed sidebar (260px) + scrollable main content.
+   ============================================================ */
+
+/* ---------------------------------------------------------
+   1. CSS Custom Properties
+   --------------------------------------------------------- */
+
+:root {
+  /* --- Palette: Dark mode (default) --- */
+  --color-bg:              #0f1219;
+  --color-bg-secondary:    #161b26;
+  --color-bg-tertiary:     #1c2333;
+  --color-surface:         #1c2333;
+  --color-surface-hover:   #232b3e;
+  --color-border:          #2a3244;
+  --color-border-subtle:   #222a3a;
+
+  --color-text:            #e1e4eb;
+  --color-text-secondary:  #9ca3b4;
+  --color-text-muted:      #6b7280;
+
+  --color-accent:          #6d9cff;
+  --color-accent-hover:    #8db4ff;
+  --color-accent-subtle:   rgba(109, 156, 255, 0.12);
+
+  --color-link:            var(--color-accent);
+  --color-link-hover:      var(--color-accent-hover);
+
+  /* Code */
+  --color-code-bg:         #131820;
+  --color-code-border:     #252d3d;
+  --color-code-text:       #c9d1d9;
+  --color-code-inline-bg:  rgba(109, 156, 255, 0.1);
+  --color-code-inline-text:#93b4ff;
+
+  /* Sidebar */
+  --sidebar-bg:            #0c0f16;
+  --sidebar-border:        #1e2536;
+  --sidebar-link:          #9ca3b4;
+  --sidebar-link-hover:    #e1e4eb;
+  --sidebar-link-active:   #6d9cff;
+  --sidebar-link-active-bg:rgba(109, 156, 255, 0.1);
+  --sidebar-section-color: #6b7280;
+
+  /* Table */
+  --table-header-bg:       #161b26;
+  --table-row-hover:       #1a2030;
+  --table-border:          #2a3244;
+
+  /* Shadows */
+  --shadow-sm:  0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md:  0 4px 12px rgba(0, 0, 0, 0.4);
+  --shadow-lg:  0 8px 24px rgba(0, 0, 0, 0.5);
+
+  /* Misc */
+  --radius-sm:  4px;
+  --radius-md:  8px;
+  --radius-lg:  12px;
+  --sidebar-width: 260px;
+  --transition-speed: 0.2s;
+
+  /* Typography */
+  --font-sans:  "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI",
+                Roboto, Oxygen, Ubuntu, Cantarell, "Helvetica Neue",
+                Arial, sans-serif;
+  --font-mono:  "JetBrains Mono", "Fira Code", "SF Mono", "Cascadia Code",
+                Menlo, Consolas, "Liberation Mono", monospace;
+  --font-size-base:  16px;
+  --font-size-sm:    14px;
+  --font-size-xs:    12px;
+  --line-height-base: 1.7;
+  --line-height-tight: 1.3;
+}
+
+/* ---------------------------------------------------------
+   2. Light mode override
+   --------------------------------------------------------- */
+
+.light-mode {
+  --color-bg:              #ffffff;
+  --color-bg-secondary:    #f6f8fa;
+  --color-bg-tertiary:     #eef1f5;
+  --color-surface:         #f6f8fa;
+  --color-surface-hover:   #eef1f5;
+  --color-border:          #d4d9e1;
+  --color-border-subtle:   #e5e8ed;
+
+  --color-text:            #1a1e2a;
+  --color-text-secondary:  #4b5563;
+  --color-text-muted:      #9ca3af;
+
+  --color-accent:          #2563eb;
+  --color-accent-hover:    #1d4ed8;
+  --color-accent-subtle:   rgba(37, 99, 235, 0.08);
+
+  --color-code-bg:         #f3f5f8;
+  --color-code-border:     #dce0e8;
+  --color-code-text:       #24292f;
+  --color-code-inline-bg:  rgba(37, 99, 235, 0.07);
+  --color-code-inline-text:#1e40af;
+
+  --sidebar-bg:            #f9fafb;
+  --sidebar-border:        #e5e7eb;
+  --sidebar-link:          #4b5563;
+  --sidebar-link-hover:    #1a1e2a;
+  --sidebar-link-active:   #2563eb;
+  --sidebar-link-active-bg:rgba(37, 99, 235, 0.08);
+  --sidebar-section-color: #9ca3af;
+
+  --table-header-bg:       #f6f8fa;
+  --table-row-hover:       #f0f3f7;
+  --table-border:          #d4d9e1;
+
+  --shadow-sm:  0 1px 2px rgba(0, 0, 0, 0.06);
+  --shadow-md:  0 4px 12px rgba(0, 0, 0, 0.08);
+  --shadow-lg:  0 8px 24px rgba(0, 0, 0, 0.1);
+}
+
+/* Also honour OS preference when no explicit class is set */
+@media (prefers-color-scheme: light) {
+  :root:not(.dark-mode) {
+    --color-bg:              #ffffff;
+    --color-bg-secondary:    #f6f8fa;
+    --color-bg-tertiary:     #eef1f5;
+    --color-surface:         #f6f8fa;
+    --color-surface-hover:   #eef1f5;
+    --color-border:          #d4d9e1;
+    --color-border-subtle:   #e5e8ed;
+
+    --color-text:            #1a1e2a;
+    --color-text-secondary:  #4b5563;
+    --color-text-muted:      #9ca3af;
+
+    --color-accent:          #2563eb;
+    --color-accent-hover:    #1d4ed8;
+    --color-accent-subtle:   rgba(37, 99, 235, 0.08);
+
+    --color-code-bg:         #f3f5f8;
+    --color-code-border:     #dce0e8;
+    --color-code-text:       #24292f;
+    --color-code-inline-bg:  rgba(37, 99, 235, 0.07);
+    --color-code-inline-text:#1e40af;
+
+    --sidebar-bg:            #f9fafb;
+    --sidebar-border:        #e5e7eb;
+    --sidebar-link:          #4b5563;
+    --sidebar-link-hover:    #1a1e2a;
+    --sidebar-link-active:   #2563eb;
+    --sidebar-link-active-bg:rgba(37, 99, 235, 0.08);
+    --sidebar-section-color: #9ca3af;
+
+    --table-header-bg:       #f6f8fa;
+    --table-row-hover:       #f0f3f7;
+    --table-border:          #d4d9e1;
+
+    --shadow-sm:  0 1px 2px rgba(0, 0, 0, 0.06);
+    --shadow-md:  0 4px 12px rgba(0, 0, 0, 0.08);
+    --shadow-lg:  0 8px 24px rgba(0, 0, 0, 0.1);
+  }
+}
+
+/* ---------------------------------------------------------
+   3. Reset & Base
+   --------------------------------------------------------- */
+
+*,
+*::before,
+*::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html {
+  font-size: var(--font-size-base);
+  scroll-behavior: smooth;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  font-family: var(--font-sans);
+  line-height: var(--line-height-base);
+  color: var(--color-text);
+  background-color: var(--color-bg);
+  transition: background-color var(--transition-speed) ease,
+              color var(--transition-speed) ease;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ---------------------------------------------------------
+   4. Layout: Sidebar + Main
+   --------------------------------------------------------- */
+
+.docs-layout {
+  display: flex;
+  min-height: 100vh;
+}
+
+/* --- Sidebar --- */
+
+.sidebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 100;
+  width: var(--sidebar-width);
+  height: 100vh;
+  overflow-y: auto;
+  background-color: var(--sidebar-bg);
+  border-right: 1px solid var(--sidebar-border);
+  padding: 1.5rem 0;
+  display: flex;
+  flex-direction: column;
+  transition: transform var(--transition-speed) ease,
+              background-color var(--transition-speed) ease;
+}
+
+.sidebar::-webkit-scrollbar {
+  width: 4px;
+}
+
+.sidebar::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 4px;
+}
+
+/* Logo / branding area */
+
+.sidebar-logo {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  padding: 0 1.25rem 1.25rem;
+  border-bottom: 1px solid var(--sidebar-border);
+  margin-bottom: 1rem;
+  text-decoration: none;
+  color: var(--color-text);
+}
+
+.sidebar-logo-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(135deg, var(--color-accent), #a78bfa);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: var(--font-size-sm);
+  color: #fff;
+  flex-shrink: 0;
+}
+
+.sidebar-logo-text {
+  font-weight: 600;
+  font-size: 0.95rem;
+  line-height: var(--line-height-tight);
+  white-space: nowrap;
+}
+
+.sidebar-logo-version {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  font-weight: 400;
+}
+
+/* Navigation */
+
+.sidebar-nav {
+  flex: 1;
+  padding: 0 0.75rem;
+}
+
+.sidebar-section {
+  margin-bottom: 1.25rem;
+}
+
+.sidebar-section-title {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--sidebar-section-color);
+  padding: 0 0.5rem;
+  margin-bottom: 0.375rem;
+}
+
+.sidebar-nav a {
+  display: block;
+  padding: 0.375rem 0.625rem;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+  color: var(--sidebar-link);
+  text-decoration: none;
+  transition: color var(--transition-speed) ease,
+              background-color var(--transition-speed) ease;
+}
+
+.sidebar-nav a:hover {
+  color: var(--sidebar-link-hover);
+  background-color: var(--color-surface-hover);
+}
+
+.sidebar-nav a.active {
+  color: var(--sidebar-link-active);
+  background-color: var(--sidebar-link-active-bg);
+  font-weight: 500;
+}
+
+/* Sidebar footer (theme toggle, links) */
+
+.sidebar-footer {
+  padding: 0.75rem 1rem;
+  border-top: 1px solid var(--sidebar-border);
+  margin-top: auto;
+}
+
+/* --- Main content --- */
+
+.main-content {
+  flex: 1;
+  margin-left: var(--sidebar-width);
+  min-width: 0;                  /* prevent flex blow-out */
+  transition: margin-left var(--transition-speed) ease;
+}
+
+.content-wrapper {
+  max-width: 48rem;              /* ~768px reading width */
+  margin: 0 auto;
+  padding: 2.5rem 2rem 4rem;
+}
+
+/* ---------------------------------------------------------
+   5. Typography
+   --------------------------------------------------------- */
+
+h1, h2, h3, h4, h5, h6 {
+  color: var(--color-text);
+  font-weight: 600;
+  line-height: var(--line-height-tight);
+  margin-top: 2rem;
+  margin-bottom: 0.75rem;
+}
+
+h1 { font-size: 2rem;    margin-top: 0; }
+h2 { font-size: 1.5rem;  padding-bottom: 0.375rem; border-bottom: 1px solid var(--color-border-subtle); }
+h3 { font-size: 1.25rem; }
+h4 { font-size: 1.1rem;  }
+h5 { font-size: 1rem;    }
+h6 { font-size: 0.875rem; color: var(--color-text-secondary); }
+
+p {
+  margin-bottom: 1rem;
+}
+
+a {
+  color: var(--color-link);
+  text-decoration: none;
+  transition: color var(--transition-speed) ease;
+}
+
+a:hover {
+  color: var(--color-link-hover);
+  text-decoration: underline;
+}
+
+strong { font-weight: 600; }
+em     { font-style: italic; }
+
+hr {
+  border: none;
+  border-top: 1px solid var(--color-border);
+  margin: 2rem 0;
+}
+
+blockquote {
+  border-left: 3px solid var(--color-accent);
+  padding: 0.5rem 1rem;
+  margin: 1rem 0;
+  background-color: var(--color-accent-subtle);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  color: var(--color-text-secondary);
+}
+
+blockquote p:last-child {
+  margin-bottom: 0;
+}
+
+ul, ol {
+  padding-left: 1.5rem;
+  margin-bottom: 1rem;
+}
+
+li {
+  margin-bottom: 0.25rem;
+}
+
+li > ul,
+li > ol {
+  margin-bottom: 0;
+}
+
+/* ---------------------------------------------------------
+   6. Heading anchor links
+   --------------------------------------------------------- */
+
+.heading-anchor {
+  color: var(--color-text-muted);
+  text-decoration: none;
+  opacity: 0;
+  padding-right: 0.375rem;
+  transition: opacity var(--transition-speed) ease,
+              color var(--transition-speed) ease;
+  font-weight: 400;
+}
+
+h1:hover .heading-anchor,
+h2:hover .heading-anchor,
+h3:hover .heading-anchor,
+h4:hover .heading-anchor,
+h5:hover .heading-anchor,
+h6:hover .heading-anchor {
+  opacity: 1;
+}
+
+.heading-anchor:hover {
+  color: var(--color-accent);
+  text-decoration: none;
+}
+
+/* Alternative: pure-CSS approach using ::before */
+
+[id] > a.anchor-link {
+  display: none;
+}
+
+h1[id]::before,
+h2[id]::before,
+h3[id]::before,
+h4[id]::before {
+  content: "#";
+  position: absolute;
+  margin-left: -1.25rem;
+  color: var(--color-text-muted);
+  opacity: 0;
+  font-weight: 400;
+  transition: opacity var(--transition-speed) ease;
+}
+
+h1[id]:hover::before,
+h2[id]:hover::before,
+h3[id]:hover::before,
+h4[id]:hover::before {
+  opacity: 0.6;
+}
+
+h1[id], h2[id], h3[id], h4[id] {
+  position: relative;
+}
+
+/* ---------------------------------------------------------
+   7. Inline code & code blocks
+   --------------------------------------------------------- */
+
+code {
+  font-family: var(--font-mono);
+  font-size: 0.875em;
+}
+
+/* Inline code */
+:not(pre) > code {
+  background-color: var(--color-code-inline-bg);
+  color: var(--color-code-inline-text);
+  padding: 0.15em 0.35em;
+  border-radius: var(--radius-sm);
+  word-break: break-word;
+}
+
+/* Code blocks */
+pre {
+  position: relative;
+  background-color: var(--color-code-bg);
+  border: 1px solid var(--color-code-border);
+  border-radius: var(--radius-md);
+  padding: 1rem 1.25rem;
+  margin: 1rem 0 1.5rem;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  line-height: 1.55;
+  tab-size: 2;
+}
+
+pre code {
+  background: none;
+  color: var(--color-code-text);
+  padding: 0;
+  border-radius: 0;
+  font-size: 0.85rem;
+  word-break: normal;
+}
+
+/* Copy button inside code block */
+.code-block-wrapper {
+  position: relative;
+}
+
+.copy-button {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.25rem 0.5rem;
+  font-family: var(--font-sans);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--transition-speed) ease,
+              color var(--transition-speed) ease,
+              background-color var(--transition-speed) ease;
+}
+
+.code-block-wrapper:hover .copy-button,
+pre:hover .copy-button {
+  opacity: 1;
+}
+
+.copy-button:hover {
+  color: var(--color-text);
+  background-color: var(--color-surface-hover);
+}
+
+.copy-button.copied {
+  color: #34d399;
+  border-color: rgba(52, 211, 153, 0.3);
+}
+
+/* Language label */
+.code-lang {
+  position: absolute;
+  top: 0.5rem;
+  left: 0.75rem;
+  font-family: var(--font-sans);
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-muted);
+  user-select: none;
+  pointer-events: none;
+}
+
+/* ---------------------------------------------------------
+   8. Tables
+   --------------------------------------------------------- */
+
+.table-wrapper {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  margin: 1rem 0 1.5rem;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--table-border);
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+}
+
+thead {
+  background-color: var(--table-header-bg);
+}
+
+th {
+  text-align: left;
+  font-weight: 600;
+  padding: 0.625rem 1rem;
+  border-bottom: 1px solid var(--table-border);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+td {
+  padding: 0.625rem 1rem;
+  border-bottom: 1px solid var(--color-border-subtle);
+  vertical-align: top;
+}
+
+tbody tr:last-child td {
+  border-bottom: none;
+}
+
+tbody tr:hover {
+  background-color: var(--table-row-hover);
+}
+
+td code {
+  font-size: 0.8rem;
+}
+
+/* ---------------------------------------------------------
+   9. Theme toggle button
+   --------------------------------------------------------- */
+
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.375rem 0.625rem;
+  font-family: var(--font-sans);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: color var(--transition-speed) ease,
+              border-color var(--transition-speed) ease,
+              background-color var(--transition-speed) ease;
+}
+
+.theme-toggle:hover {
+  color: var(--color-text);
+  border-color: var(--color-text-muted);
+  background-color: var(--color-surface-hover);
+}
+
+.theme-toggle-icon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+/* ---------------------------------------------------------
+   10. Callout / admonition boxes
+   --------------------------------------------------------- */
+
+.callout {
+  border-radius: var(--radius-md);
+  padding: 0.875rem 1rem;
+  margin: 1rem 0 1.5rem;
+  font-size: var(--font-size-sm);
+  border-left: 3px solid;
+}
+
+.callout p:last-child {
+  margin-bottom: 0;
+}
+
+.callout-title {
+  font-weight: 600;
+  margin-bottom: 0.25rem;
+  font-size: var(--font-size-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.callout-info {
+  border-color: #3b82f6;
+  background-color: rgba(59, 130, 246, 0.08);
+}
+
+.callout-info .callout-title { color: #60a5fa; }
+
+.callout-warning {
+  border-color: #f59e0b;
+  background-color: rgba(245, 158, 11, 0.08);
+}
+
+.callout-warning .callout-title { color: #fbbf24; }
+
+.callout-danger {
+  border-color: #ef4444;
+  background-color: rgba(239, 68, 68, 0.08);
+}
+
+.callout-danger .callout-title { color: #f87171; }
+
+.callout-tip {
+  border-color: #10b981;
+  background-color: rgba(16, 185, 129, 0.08);
+}
+
+.callout-tip .callout-title { color: #34d399; }
+
+/* ---------------------------------------------------------
+   11. Breadcrumb
+   --------------------------------------------------------- */
+
+.breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+  margin-bottom: 1.25rem;
+}
+
+.breadcrumb a {
+  color: var(--color-text-muted);
+}
+
+.breadcrumb a:hover {
+  color: var(--color-accent);
+  text-decoration: none;
+}
+
+.breadcrumb-sep {
+  user-select: none;
+}
+
+/* ---------------------------------------------------------
+   12. Mobile hamburger & responsive
+   --------------------------------------------------------- */
+
+.hamburger {
+  display: none;
+  position: fixed;
+  top: 0.75rem;
+  left: 0.75rem;
+  z-index: 200;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background-color: var(--color-bg);
+  cursor: pointer;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  transition: background-color var(--transition-speed) ease;
+}
+
+.hamburger span {
+  display: block;
+  width: 18px;
+  height: 2px;
+  background-color: var(--color-text);
+  border-radius: 1px;
+  transition: transform var(--transition-speed) ease,
+              opacity var(--transition-speed) ease;
+}
+
+.hamburger.active span:nth-child(1) {
+  transform: translateY(7px) rotate(45deg);
+}
+
+.hamburger.active span:nth-child(2) {
+  opacity: 0;
+}
+
+.hamburger.active span:nth-child(3) {
+  transform: translateY(-7px) rotate(-45deg);
+}
+
+/* Overlay behind sidebar on mobile */
+.sidebar-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  background-color: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(2px);
+  opacity: 0;
+  transition: opacity var(--transition-speed) ease;
+}
+
+.sidebar-overlay.active {
+  opacity: 1;
+}
+
+@media (max-width: 768px) {
+  .hamburger {
+    display: flex;
+  }
+
+  .sidebar {
+    transform: translateX(-100%);
+    box-shadow: var(--shadow-lg);
+  }
+
+  .sidebar.open {
+    transform: translateX(0);
+  }
+
+  .sidebar-overlay {
+    display: block;
+    pointer-events: none;
+  }
+
+  .sidebar-overlay.active {
+    pointer-events: auto;
+  }
+
+  .main-content {
+    margin-left: 0;
+  }
+
+  .content-wrapper {
+    padding: 3.5rem 1.25rem 3rem;  /* extra top for hamburger */
+  }
+
+  h1 { font-size: 1.625rem; }
+  h2 { font-size: 1.3rem;   }
+  h3 { font-size: 1.1rem;   }
+}
+
+/* Slightly wider tablets */
+@media (min-width: 769px) and (max-width: 1024px) {
+  .content-wrapper {
+    padding: 2rem 1.5rem 3rem;
+  }
+}
+
+/* ---------------------------------------------------------
+   13. On-this-page (table of contents)
+   --------------------------------------------------------- */
+
+.toc {
+  font-size: var(--font-size-sm);
+  margin-bottom: 2rem;
+  padding: 1rem 1.25rem;
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+}
+
+.toc-title {
+  font-weight: 600;
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-muted);
+  margin-bottom: 0.5rem;
+}
+
+.toc ul {
+  list-style: none;
+  padding-left: 0;
+  margin-bottom: 0;
+}
+
+.toc li {
+  margin-bottom: 0.2rem;
+}
+
+.toc a {
+  color: var(--color-text-secondary);
+  text-decoration: none;
+  transition: color var(--transition-speed) ease;
+}
+
+.toc a:hover {
+  color: var(--color-accent);
+}
+
+.toc ul ul {
+  padding-left: 1rem;
+}
+
+/* ---------------------------------------------------------
+   14. Badge / tag
+   --------------------------------------------------------- */
+
+.badge {
+  display: inline-block;
+  padding: 0.125rem 0.45rem;
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  border-radius: 9999px;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.badge-default {
+  background-color: var(--color-surface);
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border);
+}
+
+.badge-accent {
+  background-color: var(--color-accent-subtle);
+  color: var(--color-accent);
+}
+
+.badge-success {
+  background-color: rgba(16, 185, 129, 0.1);
+  color: #34d399;
+}
+
+.badge-warning {
+  background-color: rgba(245, 158, 11, 0.1);
+  color: #fbbf24;
+}
+
+.badge-danger {
+  background-color: rgba(239, 68, 68, 0.1);
+  color: #f87171;
+}
+
+/* ---------------------------------------------------------
+   15. Utilities
+   --------------------------------------------------------- */
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.text-muted   { color: var(--color-text-muted); }
+.text-accent  { color: var(--color-accent); }
+.mt-0         { margin-top: 0; }
+.mb-0         { margin-bottom: 0; }
+.mb-2         { margin-bottom: 2rem; }
+
+/* Smooth transition on theme switch for all colored elements */
+*,
+*::before,
+*::after {
+  transition-property: background-color, border-color, color, box-shadow;
+  transition-duration: 0s;   /* instant by default */
+}
+
+/* Only animate during theme transitions - toggled via JS */
+.theme-transitioning,
+.theme-transitioning *,
+.theme-transitioning *::before,
+.theme-transitioning *::after {
+  transition-duration: 0.35s !important;
+  transition-timing-function: ease !important;
+}
+
+/* ---------------------------------------------------------
+   16. Print styles
+   --------------------------------------------------------- */
+
+@media print {
+  .sidebar,
+  .hamburger,
+  .sidebar-overlay,
+  .theme-toggle,
+  .copy-button,
+  .breadcrumb {
+    display: none !important;
+  }
+
+  .main-content {
+    margin-left: 0 !important;
+  }
+
+  .content-wrapper {
+    max-width: 100%;
+    padding: 0;
+  }
+
+  body {
+    color: #000;
+    background: #fff;
+  }
+
+  pre {
+    border: 1px solid #ccc;
+    page-break-inside: avoid;
+  }
+
+  a { color: #000; text-decoration: underline; }
+  a[href]::after { content: " (" attr(href) ")"; font-size: 0.8em; }
+}
