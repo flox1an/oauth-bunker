@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OAuth Provider Setup - Nostr OAuth Signer Docs</title>
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+</head>
+<body>
+  <button id="menu-toggle" aria-label="Toggle navigation">
+    <span></span><span></span><span></span>
+  </button>
+
+  <div id="sidebar"></div>
+
+  <main>
+    <div class="top-bar">
+      <button id="theme-toggle">Toggle Theme</button>
+    </div>
+
+    <h1>OAuth Provider Setup</h1>
+    <p>Each OAuth provider requires creating an application in their developer console. The callback URL pattern is <code>{PUBLIC_URL}/auth/{provider}/callback</code>.</p>
+
+    <h2>Redirect URI Reference</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Provider</th>
+          <th>Callback URL</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Google</td>
+          <td><code>{PUBLIC_URL}/auth/google/callback</code></td>
+        </tr>
+        <tr>
+          <td>GitHub</td>
+          <td><code>{PUBLIC_URL}/auth/github/callback</code></td>
+        </tr>
+        <tr>
+          <td>Microsoft</td>
+          <td><code>{PUBLIC_URL}/auth/microsoft/callback</code></td>
+        </tr>
+        <tr>
+          <td>Apple</td>
+          <td><code>{PUBLIC_URL}/auth/apple/callback</code></td>
+        </tr>
+      </tbody>
+    </table>
+    <p>For local development, <code>PUBLIC_URL</code> is <code>http://localhost:3000</code>.</p>
+
+    <h2>Google</h2>
+    <ol>
+      <li>Go to <a href="https://console.cloud.google.com/" target="_blank" rel="noopener">Google Cloud Console</a></li>
+      <li>Create a new project or select existing</li>
+      <li>Navigate to APIs &amp; Services &rarr; Credentials</li>
+      <li>Click Create Credentials &rarr; OAuth client ID</li>
+      <li>If prompted, configure OAuth consent screen first:
+        <ul>
+          <li>Choose "External" user type</li>
+          <li>Fill in app name, support email</li>
+          <li>Add scopes: <code>openid</code>, <code>email</code>, <code>profile</code></li>
+          <li>Add your domain to authorized domains</li>
+        </ul>
+      </li>
+      <li>Create OAuth 2.0 Client ID:
+        <ul>
+          <li>Application type: Web application</li>
+          <li>Authorized redirect URIs: <code>https://your-domain.com/auth/google/callback</code></li>
+          <li>For local dev: <code>http://localhost:3000/auth/google/callback</code></li>
+        </ul>
+      </li>
+      <li>Copy credentials:</li>
+    </ol>
+    <pre><code class="language-env">GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=your-client-secret</code></pre>
+
+    <h2>GitHub</h2>
+    <ol>
+      <li>Go to <a href="https://github.com/settings/developers" target="_blank" rel="noopener">GitHub Developer Settings</a></li>
+      <li>Click New OAuth App</li>
+      <li>Fill in:
+        <ul>
+          <li>Application name: your app name</li>
+          <li>Homepage URL: <code>https://your-domain.com</code></li>
+          <li>Authorization callback URL: <code>https://your-domain.com/auth/github/callback</code></li>
+          <li>For local dev: <code>http://localhost:3000/auth/github/callback</code></li>
+        </ul>
+      </li>
+      <li>Register application</li>
+      <li>Generate a new client secret (only shown once &mdash; save immediately)</li>
+      <li>Copy credentials:</li>
+    </ol>
+    <pre><code class="language-env">GITHUB_CLIENT_ID=your-client-id
+GITHUB_CLIENT_SECRET=your-client-secret</code></pre>
+
+    <h2>Microsoft</h2>
+    <ol>
+      <li>Go to <a href="https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade" target="_blank" rel="noopener">Azure Portal App Registrations</a></li>
+      <li>Click New registration</li>
+      <li>Fill in:
+        <ul>
+          <li>Name: your app name</li>
+          <li>Supported account types: Personal Microsoft accounts only (for Outlook.com)</li>
+          <li>Or "Accounts in any org directory and personal" for work/school too</li>
+          <li>Redirect URI: Web &rarr; <code>https://your-domain.com/auth/microsoft/callback</code></li>
+        </ul>
+      </li>
+      <li>Register, copy Application (client) ID</li>
+      <li>Certificates &amp; secrets &rarr; New client secret (value only shown once)</li>
+      <li>API permissions should have: <code>openid</code>, <code>email</code>, <code>profile</code>, <code>User.Read</code> (usually default)</li>
+      <li>Copy credentials:</li>
+    </ol>
+    <pre><code class="language-env">MICROSOFT_CLIENT_ID=your-application-client-id
+MICROSOFT_CLIENT_SECRET=your-client-secret-value</code></pre>
+    <p><strong>Tenant configuration</strong>: The app uses the <code>consumers</code> tenant (personal accounts only). To change: modify auth/token URLs in <code>src/oauth.rs</code>. Options: <code>consumers</code>, <code>organizations</code>, <code>common</code>.</p>
+
+    <h2>Apple</h2>
+    <ol>
+      <li>Go to <a href="https://developer.apple.com/account" target="_blank" rel="noopener">Apple Developer Portal</a></li>
+      <li>Certificates, Identifiers &amp; Profiles &rarr; Identifiers</li>
+      <li>Create App ID with Sign in with Apple capability</li>
+      <li>Create Services ID (this is your OAuth client ID):
+        <ul>
+          <li>Enable Sign in with Apple, configure:</li>
+          <li>Domain: <code>your-domain.com</code></li>
+          <li>Return URL: <code>https://your-domain.com/auth/apple/callback</code></li>
+        </ul>
+      </li>
+      <li>Create a Key:
+        <ul>
+          <li>Enable Sign in with Apple</li>
+          <li>Download the .p8 key file (only downloadable once)</li>
+          <li>Note the Key ID</li>
+        </ul>
+      </li>
+      <li>Generate client secret JWT (must regenerate every 6 months):</li>
+    </ol>
+    <pre><code class="language-bash">pip install pyjwt cryptography
+python3 -c "
+import jwt, time
+key = open('AuthKey_XXXXXXXXXX.p8').read()
+token = jwt.encode(
+    {'iss': 'YOUR_TEAM_ID', 'iat': int(time.time()),
+     'exp': int(time.time()) + 15777000,
+     'aud': 'https://appleid.apple.com',
+     'sub': 'com.yourdomain.oauthsigner.web'},
+    key, algorithm='ES256',
+    headers={'kid': 'YOUR_KEY_ID'}
+)
+print(token)
+"</code></pre>
+    <ol start="7">
+      <li>Copy credentials:</li>
+    </ol>
+    <pre><code class="language-env">APPLE_CLIENT_ID=com.yourdomain.oauthsigner.web
+APPLE_CLIENT_SECRET=&lt;generated JWT&gt;</code></pre>
+    <p><strong>Note</strong>: Apple requires HTTPS for redirect URIs, even in development. Use a tunneling service like ngrok or configure a local TLS proxy.</p>
+
+    <h2>Master Encryption Key</h2>
+    <p>Generate a 32-byte random key:</p>
+    <pre><code class="language-bash">openssl rand -hex 32</code></pre>
+    <p>Add to <code>.env</code>:</p>
+    <pre><code class="language-env">MASTER_KEY=your-64-character-hex-string</code></pre>
+    <p>This encrypts all stored Nostr private keys (nsecs) at rest. Keep it secure and backed up. Losing it means losing access to all stored keys.</p>
+  </main>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="js/nav.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>

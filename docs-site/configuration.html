@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Configuration - Nostr OAuth Signer Docs</title>
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+</head>
+<body>
+  <button id="menu-toggle" aria-label="Toggle navigation">
+    <span></span><span></span><span></span>
+  </button>
+
+  <div id="sidebar"></div>
+
+  <main>
+    <div class="top-bar">
+      <button id="theme-toggle">Toggle Theme</button>
+    </div>
+
+    <h1>Configuration Reference</h1>
+    <p>All configuration is via environment variables, loaded from a <code>.env</code> file in the project root.</p>
+
+    <h2>Environment Variables</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Variable</th>
+          <th>Required</th>
+          <th>Default</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>HOST</code></td>
+          <td>No</td>
+          <td><code>127.0.0.1</code></td>
+          <td>Server bind address</td>
+        </tr>
+        <tr>
+          <td><code>PORT</code></td>
+          <td>No</td>
+          <td><code>3000</code></td>
+          <td>Server port</td>
+        </tr>
+        <tr>
+          <td><code>PUBLIC_URL</code></td>
+          <td>No</td>
+          <td><code>http://localhost:3000</code></td>
+          <td>Full public URL used for OAuth callback generation</td>
+        </tr>
+        <tr>
+          <td><code>MASTER_KEY</code></td>
+          <td><strong>Yes</strong></td>
+          <td>&mdash;</td>
+          <td>32-byte hex key (64 chars) for encrypting stored nsecs</td>
+        </tr>
+        <tr>
+          <td><code>GOOGLE_CLIENT_ID</code></td>
+          <td><strong>Yes</strong></td>
+          <td>&mdash;</td>
+          <td>Google OAuth client ID</td>
+        </tr>
+        <tr>
+          <td><code>GOOGLE_CLIENT_SECRET</code></td>
+          <td><strong>Yes</strong></td>
+          <td>&mdash;</td>
+          <td>Google OAuth client secret</td>
+        </tr>
+        <tr>
+          <td><code>GITHUB_CLIENT_ID</code></td>
+          <td><strong>Yes</strong></td>
+          <td>&mdash;</td>
+          <td>GitHub OAuth client ID</td>
+        </tr>
+        <tr>
+          <td><code>GITHUB_CLIENT_SECRET</code></td>
+          <td><strong>Yes</strong></td>
+          <td>&mdash;</td>
+          <td>GitHub OAuth client secret</td>
+        </tr>
+        <tr>
+          <td><code>MICROSOFT_CLIENT_ID</code></td>
+          <td><strong>Yes</strong></td>
+          <td>&mdash;</td>
+          <td>Microsoft OAuth client ID</td>
+        </tr>
+        <tr>
+          <td><code>MICROSOFT_CLIENT_SECRET</code></td>
+          <td><strong>Yes</strong></td>
+          <td>&mdash;</td>
+          <td>Microsoft OAuth client secret</td>
+        </tr>
+        <tr>
+          <td><code>APPLE_CLIENT_ID</code></td>
+          <td><strong>Yes</strong></td>
+          <td>&mdash;</td>
+          <td>Apple Services ID (e.g., com.yourdomain.app.web)</td>
+        </tr>
+        <tr>
+          <td><code>APPLE_CLIENT_SECRET</code></td>
+          <td><strong>Yes</strong></td>
+          <td>&mdash;</td>
+          <td>Apple JWT client secret (regenerate every 6 months)</td>
+        </tr>
+        <tr>
+          <td><code>NOSTR_RELAYS</code></td>
+          <td>No</td>
+          <td><code>wss://relay.nsec.app,wss://relay.damus.io,wss://nos.lol</code></td>
+          <td>Comma-separated Nostr relay URLs</td>
+        </tr>
+        <tr>
+          <td><code>DATABASE_URL</code></td>
+          <td>No</td>
+          <td><code>oauth-signer.db</code></td>
+          <td>SQLite database file path</td>
+        </tr>
+        <tr>
+          <td><code>RUST_LOG</code></td>
+          <td>No</td>
+          <td>&mdash;</td>
+          <td>Logging filter (e.g., <code>info</code>, <code>oauth_signer=debug</code>)</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>Server Configuration</h2>
+    <ul>
+      <li><code>HOST</code>: Bind address. Use <code>0.0.0.0</code> to listen on all interfaces, <code>127.0.0.1</code> for localhost only.</li>
+      <li><code>PORT</code>: TCP port. Default 3000.</li>
+      <li><code>PUBLIC_URL</code>: The full URL where the app is accessible. Critical for OAuth &mdash; callback URLs are generated from this. Must match what's configured in each OAuth provider's dashboard.</li>
+    </ul>
+
+    <h2>Encryption</h2>
+    <ul>
+      <li><code>MASTER_KEY</code>: The root encryption key. All nsecs are encrypted using keys derived from this via HKDF-SHA256. Generate with:
+        <pre><code class="language-bash">openssl rand -hex 32</code></pre>
+        Must be exactly 64 hex characters (32 bytes). Back this up securely &mdash; without it, encrypted nsecs cannot be decrypted.
+      </li>
+    </ul>
+
+    <h2>OAuth Providers</h2>
+    <p>All 8 OAuth variables (4 providers &times; 2 each) are required at startup. If you don't use a provider, you still need to set the vars (can be empty strings, but the app will error if they're missing entirely). See <a href="oauth-setup.html">OAuth Setup</a> for how to obtain credentials.</p>
+
+    <h2>Nostr</h2>
+    <ul>
+      <li><code>NOSTR_RELAYS</code>: The relays the bunker connects to for NIP-46 communication. Clients must use the same relays to reach the bunker. The default set (<code>relay.nsec.app</code>, <code>relay.damus.io</code>, <code>nos.lol</code>) provides good coverage.</li>
+    </ul>
+
+    <h2>Database</h2>
+    <ul>
+      <li><code>DATABASE_URL</code>: Path to the SQLite database file. Created automatically on first run. Uses WAL journal mode for concurrent access. Relative paths are relative to the working directory.</li>
+    </ul>
+
+    <h2>Logging</h2>
+    <ul>
+      <li><code>RUST_LOG</code>: Controls log verbosity using the <code>tracing-subscriber</code> EnvFilter format. Examples:
+        <ul>
+          <li><code>info</code> &mdash; general info messages</li>
+          <li><code>oauth_signer=debug</code> &mdash; debug output from the app</li>
+          <li><code>oauth_signer=trace,tower_http=debug</code> &mdash; very verbose with HTTP request logging</li>
+        </ul>
+      </li>
+    </ul>
+    <p>Logs are output as structured JSON (useful for log aggregation tools).</p>
+
+    <h2>Complete Example .env</h2>
+    <pre><code class="language-env"># Server
+HOST=127.0.0.1
+PORT=3000
+PUBLIC_URL=https://bunker.yourdomain.com
+
+# Encryption
+MASTER_KEY=your-64-character-hex-key-here
+
+# Google OAuth
+GOOGLE_CLIENT_ID=123456789.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=GOCSPX-xxxxx
+
+# GitHub OAuth
+GITHUB_CLIENT_ID=Iv1.xxxxxxxxxxxx
+GITHUB_CLIENT_SECRET=xxxxxxxxxxxxxxxxxxxx
+
+# Microsoft OAuth
+MICROSOFT_CLIENT_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+MICROSOFT_CLIENT_SECRET=xxxxxxxxxxxxxxxxxxxx
+
+# Apple Sign In
+APPLE_CLIENT_ID=com.yourdomain.app.web
+APPLE_CLIENT_SECRET=eyJhbGciOiJFUzI1NiIs...
+
+# Nostr
+NOSTR_RELAYS=wss://relay.nsec.app,wss://relay.damus.io,wss://nos.lol
+
+# Database
+DATABASE_URL=oauth-signer.db
+
+# Logging
+RUST_LOG=info</code></pre>
+  </main>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="js/nav.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>

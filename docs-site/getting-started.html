@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Quick Start - Nostr OAuth Signer Docs</title>
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+</head>
+<body>
+  <button id="menu-toggle" aria-label="Toggle navigation">
+    <span></span><span></span><span></span>
+  </button>
+
+  <div id="sidebar"></div>
+
+  <main>
+    <div class="top-bar">
+      <button id="theme-toggle">Toggle Theme</button>
+    </div>
+
+    <h1>Quick Start</h1>
+
+    <h2>Prerequisites</h2>
+    <ul>
+      <li>Rust 1.70+ (for building the server)</li>
+      <li>Node.js 18+ (for building the web UI)</li>
+      <li>Git</li>
+      <li>OpenSSL (for generating the master key)</li>
+    </ul>
+
+    <h2>Clone and Build</h2>
+    <pre><code class="language-bash">git clone https://github.com/ArcadeLabsInc/oauth-signer.git
+cd oauth-signer
+
+# Build the web UI
+cd web-ui && npm install && npm run build && cd ..
+
+# Build the Rust server
+cargo build --release</code></pre>
+
+    <h2>Generate a Master Key</h2>
+    <p>The master key encrypts all stored Nostr private keys. Generate a random 32-byte key:</p>
+    <pre><code class="language-bash">openssl rand -hex 32</code></pre>
+    <p>Keep this key secure and backed up. Losing it means losing access to all stored keys.</p>
+
+    <h2>Create Your Configuration</h2>
+    <p>Create a <code>.env</code> file in the project root:</p>
+    <pre><code class="language-env">HOST=127.0.0.1
+PORT=3000
+PUBLIC_URL=http://localhost:3000
+MASTER_KEY=&lt;paste your 64-character hex key&gt;
+
+# OAuth providers (configure at least one)
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+GITHUB_CLIENT_ID=
+GITHUB_CLIENT_SECRET=
+MICROSOFT_CLIENT_ID=
+MICROSOFT_CLIENT_SECRET=
+APPLE_CLIENT_ID=
+APPLE_CLIENT_SECRET=
+
+# Nostr relays (defaults work for most setups)
+# NOSTR_RELAYS=wss://relay.nsec.app,wss://relay.damus.io,wss://nos.lol</code></pre>
+    <p>Note: All OAuth provider vars are required even if empty. See <a href="oauth-setup.html">OAuth Setup</a> for how to get credentials.</p>
+
+    <h2>Configure an OAuth Provider</h2>
+    <p>You need at least one OAuth provider configured. The quickest to set up is GitHub:</p>
+    <ol>
+      <li>Go to GitHub Developer Settings &rarr; OAuth Apps &rarr; New OAuth App</li>
+      <li>Set callback URL to <code>http://localhost:3000/auth/github/callback</code></li>
+      <li>Copy Client ID and Client Secret to your <code>.env</code></li>
+    </ol>
+    <p>See the full <a href="oauth-setup.html">OAuth Setup Guide</a> for all providers.</p>
+
+    <h2>Run the Server</h2>
+    <pre><code class="language-bash">cargo run</code></pre>
+    <p>Or use the release build:</p>
+    <pre><code class="language-bash">./target/release/oauth-signer</code></pre>
+
+    <h2>Verify It's Working</h2>
+    <p>Visit <code>http://localhost:3000</code> in your browser. You should see the landing page with OAuth sign-in buttons.</p>
+
+    <h2>Next Steps</h2>
+    <ul>
+      <li><a href="oauth-setup.html">OAuth Setup</a> - Configure all OAuth providers</li>
+      <li><a href="configuration.html">Configuration</a> - Full configuration reference</li>
+      <li><a href="admin-guide.html">Admin Guide</a> - Managing identities and users</li>
+      <li><a href="deployment.html">Deployment</a> - Production deployment guide</li>
+    </ul>
+  </main>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="js/nav.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>
