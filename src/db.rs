@@ -392,11 +392,51 @@ impl Database {
         rows.collect()
     }
 
+    /// List all connections with identity info and user email (admin).
+    pub fn list_all_connections_with_identity(
+        &self,
+    ) -> rusqlite::Result<Vec<(NipConnection, Option<String>, Option<String>, Option<String>)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT c.id, c.user_id, c.client_pubkey, c.relay_url, c.created_at, c.last_used_at,
+                    i.pubkey, i.label, u.email
+             FROM connections c
+             LEFT JOIN identities i ON c.identity_id = i.id
+             LEFT JOIN users u ON c.user_id = u.id
+             ORDER BY c.created_at DESC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                NipConnection {
+                    id: row.get(0)?,
+                    user_id: row.get(1)?,
+                    client_pubkey: row.get(2)?,
+                    relay_url: row.get(3)?,
+                    created_at: row.get(4)?,
+                    last_used_at: row.get(5)?,
+                },
+                row.get::<_, Option<String>>(6)?,
+                row.get::<_, Option<String>>(7)?,
+                row.get::<_, Option<String>>(8)?,
+            ))
+        })?;
+        rows.collect()
+    }
+
     pub fn delete_connection(&self, id: &str, user_id: &str) -> rusqlite::Result<bool> {
         let conn = self.conn.lock().unwrap();
         let affected = conn.execute(
             "DELETE FROM connections WHERE id = ?1 AND user_id = ?2",
             params![id, user_id],
+        )?;
+        Ok(affected > 0)
+    }
+
+    pub fn delete_connection_admin(&self, id: &str) -> rusqlite::Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let affected = conn.execute(
+            "DELETE FROM connections WHERE id = ?1",
+            params![id],
         )?;
         Ok(affected > 0)
     }

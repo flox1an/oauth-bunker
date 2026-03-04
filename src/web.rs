@@ -103,6 +103,19 @@ struct UserResponse {
 }
 
 #[derive(Serialize)]
+struct AdminConnectionResponse {
+    id: String,
+    user_id: String,
+    client_pubkey: String,
+    relay_url: String,
+    created_at: i64,
+    last_used_at: i64,
+    identity_pubkey: Option<String>,
+    identity_label: Option<String>,
+    user_email: Option<String>,
+}
+
+#[derive(Serialize)]
 struct AssignmentResponse {
     id: String,
     user_id: String,
@@ -153,6 +166,8 @@ pub fn router() -> Router<AppState> {
         .route("/api/admin/users", get(api_list_users))
         .route("/api/admin/assignments", get(api_list_assignments).post(api_create_assignment))
         .route("/api/admin/assignments/{id}", delete(api_delete_assignment))
+        .route("/api/admin/connections", get(api_admin_list_connections))
+        .route("/api/admin/connections/{id}", delete(api_admin_delete_connection))
         .route("/api/select-identity", post(api_select_identity))
 }
 
@@ -1060,5 +1075,61 @@ async fn api_delete_assignment(
         Ok(Json(serde_json::json!({"deleted": true})))
     } else {
         Err((StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "Assignment not found"}))).into_response())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// API: GET /api/admin/connections
+// ---------------------------------------------------------------------------
+
+async fn api_admin_list_connections(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, Response> {
+    let url = format!("{}/api/admin/connections", state.config.public_url);
+    verify_admin_auth(&state, &headers, "GET", &url)?;
+
+    let connections = state.db.list_all_connections_with_identity().map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("Database error: {e}")}))).into_response()
+    })?;
+
+    let response: Vec<AdminConnectionResponse> = connections
+        .into_iter()
+        .map(|(c, identity_pubkey, identity_label, user_email)| AdminConnectionResponse {
+            id: c.id,
+            user_id: c.user_id,
+            client_pubkey: c.client_pubkey,
+            relay_url: c.relay_url,
+            created_at: c.created_at,
+            last_used_at: c.last_used_at,
+            identity_pubkey,
+            identity_label,
+            user_email: user_email.as_deref().map(obfuscate_email),
+        })
+        .collect();
+
+    Ok(Json(response))
+}
+
+// ---------------------------------------------------------------------------
+// API: DELETE /api/admin/connections/{id}
+// ---------------------------------------------------------------------------
+
+async fn api_admin_delete_connection(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<impl IntoResponse, Response> {
+    let url = format!("{}/api/admin/connections/{}", state.config.public_url, id);
+    verify_admin_auth(&state, &headers, "DELETE", &url)?;
+
+    let deleted = state.db.delete_connection_admin(&id).map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("Database error: {e}")}))).into_response()
+    })?;
+
+    if deleted {
+        Ok(Json(serde_json::json!({"deleted": true})))
+    } else {
+        Err((StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "Connection not found"}))).into_response())
     }
 }
