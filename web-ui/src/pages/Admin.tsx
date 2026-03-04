@@ -24,6 +24,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Loader2, Trash2 } from 'lucide-react'
+import { adminFetch, getNostrPublicKey } from '@/lib/nostr-auth'
 
 interface Identity {
   id: string
@@ -58,6 +59,9 @@ function truncate(str: string, len: number = 16): string {
 }
 
 export default function Admin() {
+  const [authState, setAuthState] = useState<'loading' | 'no-extension' | 'connect' | 'unauthorized' | 'authenticated'>('loading')
+  const [adminPubkey, setAdminPubkey] = useState<string | null>(null)
+
   const [identities, setIdentities] = useState<Identity[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -77,9 +81,45 @@ export default function Admin() {
   const [assignLoading, setAssignLoading] = useState(false)
   const [assignError, setAssignError] = useState<string | null>(null)
 
+  // Check for NIP-07 extension on mount
+  useEffect(() => {
+    if (!window.nostr) {
+      setAuthState('no-extension')
+      return
+    }
+    setAuthState('connect')
+  }, [])
+
+  const handleConnect = async () => {
+    try {
+      const pubkey = await getNostrPublicKey()
+      if (!pubkey) {
+        setAuthState('no-extension')
+        return
+      }
+      setAdminPubkey(pubkey)
+      const res = await adminFetch('/api/admin/identities')
+      if (res.status === 401 || res.status === 403) {
+        setAuthState('unauthorized')
+        return
+      }
+      if (!res.ok) {
+        setError('Failed to authenticate')
+        return
+      }
+      const data = await res.json()
+      setIdentities(data)
+      setAuthState('authenticated')
+      setLoading(false)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Authentication failed')
+      setAuthState('connect')
+    }
+  }
+
   const fetchIdentities = useCallback(async () => {
     try {
-      const res = await fetch('/api/identities')
+      const res = await adminFetch('/api/admin/identities')
       if (!res.ok) throw new Error('Failed to fetch identities')
       const data = await res.json()
       setIdentities(data)
@@ -92,7 +132,7 @@ export default function Admin() {
 
   const fetchUsers = useCallback(async () => {
     try {
-      const res = await fetch('/api/admin/users')
+      const res = await adminFetch('/api/admin/users')
       if (!res.ok) throw new Error('Failed to fetch users')
       setUsers(await res.json())
     } catch {
@@ -102,7 +142,7 @@ export default function Admin() {
 
   const fetchAssignments = useCallback(async () => {
     try {
-      const res = await fetch('/api/admin/assignments')
+      const res = await adminFetch('/api/admin/assignments')
       if (!res.ok) throw new Error('Failed to fetch assignments')
       setAssignments(await res.json())
     } catch {
@@ -111,10 +151,11 @@ export default function Admin() {
   }, [])
 
   useEffect(() => {
-    fetchIdentities()
+    if (authState !== 'authenticated') return
+    // identities already loaded during auth check
     fetchUsers()
     fetchAssignments()
-  }, [fetchIdentities, fetchUsers, fetchAssignments])
+  }, [authState, fetchUsers, fetchAssignments])
 
   const handleAdd = async () => {
     setAddLoading(true)
@@ -123,11 +164,7 @@ export default function Admin() {
       const body: { nsec: string; label?: string } = { nsec: nsecInput }
       if (labelInput.trim()) body.label = labelInput.trim()
 
-      const res = await fetch('/api/admin/identities', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      })
+      const res = await adminFetch('/api/admin/identities', 'POST', body)
       if (!res.ok) {
         const data = await res.json()
         throw new Error(data.error || 'Failed to add identity')
@@ -144,7 +181,7 @@ export default function Admin() {
 
   const handleDelete = async (id: string) => {
     try {
-      const res = await fetch(`/api/admin/identities/${id}`, { method: 'DELETE' })
+      const res = await adminFetch(`/api/admin/identities/${id}`, 'DELETE')
       if (res.ok) {
         setIdentities((prev) => prev.filter((i) => i.id !== id))
       }
@@ -157,14 +194,10 @@ export default function Admin() {
     setAssignLoading(true)
     setAssignError(null)
     try {
-      const res = await fetch('/api/admin/assignments', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          user_id: selectedUserId,
-          identity_id: selectedIdentityId,
-          duration: selectedDuration,
-        }),
+      const res = await adminFetch('/api/admin/assignments', 'POST', {
+        user_id: selectedUserId,
+        identity_id: selectedIdentityId,
+        duration: selectedDuration,
       })
       if (!res.ok) {
         const data = await res.json()
@@ -183,7 +216,7 @@ export default function Admin() {
 
   const handleDeleteAssignment = async (id: string) => {
     try {
-      const res = await fetch(`/api/admin/assignments/${id}`, { method: 'DELETE' })
+      const res = await adminFetch(`/api/admin/assignments/${id}`, 'DELETE')
       if (res.ok) {
         setAssignments((prev) => prev.filter((a) => a.id !== id))
       }
@@ -192,6 +225,77 @@ export default function Admin() {
     }
   }
 
+  // Auth gate screens
+  if (authState === 'loading') {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    )
+  }
+
+  if (authState === 'no-extension') {
+    return (
+      <div className="flex min-h-screen items-center justify-center px-4">
+        <Card className="w-full max-w-[500px]">
+          <CardHeader>
+            <CardTitle>Nostr Extension Required</CardTitle>
+            <CardDescription>
+              Install a NIP-07 browser extension (like nos2x or Alby) to access the admin panel.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button variant="outline" onClick={() => window.location.reload()}>
+              Retry
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
+
+  if (authState === 'connect') {
+    return (
+      <div className="flex min-h-screen items-center justify-center px-4">
+        <Card className="w-full max-w-[500px]">
+          <CardHeader>
+            <CardTitle>Admin Panel</CardTitle>
+            <CardDescription>
+              Connect with your Nostr identity to access the admin panel.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {error && <p className="text-sm text-destructive">{error}</p>}
+            <Button onClick={handleConnect}>
+              Connect with Nostr
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
+
+  if (authState === 'unauthorized') {
+    return (
+      <div className="flex min-h-screen items-center justify-center px-4">
+        <Card className="w-full max-w-[500px]">
+          <CardHeader>
+            <CardTitle>Not Authorized</CardTitle>
+            <CardDescription>
+              Your pubkey ({adminPubkey ? truncate(adminPubkey, 20) : 'unknown'}) is not in the admin allowlist.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button variant="outline" onClick={() => { setAuthState('connect'); setError(null) }}>
+              Try Another Key
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
+
+  // Authenticated — show loading/error for data fetching
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
