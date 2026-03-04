@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Overview - Nostr OAuth Signer Docs</title>
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+</head>
+<body>
+  <button id="menu-toggle" aria-label="Toggle navigation">
+    <span></span><span></span><span></span>
+  </button>
+
+  <div id="sidebar">
+    <!-- Populated by nav.js -->
+  </div>
+
+  <main>
+    <div class="top-bar">
+      <button id="theme-toggle">Toggle Theme</button>
+    </div>
+
+    <section class="hero">
+      <h1>Nostr OAuth Signer</h1>
+      <p class="subtitle">Bridge traditional OAuth authentication with Nostr's cryptographic identity model</p>
+    </section>
+
+    <section>
+      <h2>What It Does</h2>
+      <p>
+        Nostr OAuth Signer lets users authenticate with familiar OAuth providers — Google, GitHub,
+        Microsoft, or Apple — and then manage Nostr identities (keypairs) within an encrypted vault.
+        Nostr clients connect to the signer via NIP-46 (Nostr Connect) for remote signing, so
+        private keys never need to be exposed to client applications.
+      </p>
+    </section>
+
+    <section>
+      <h2>Key Features</h2>
+      <ul class="feature-list">
+        <li>
+          <strong>OAuth Authentication</strong> — Sign in with Google, GitHub, Microsoft, or Apple.
+        </li>
+        <li>
+          <strong>Encrypted Key Storage</strong> — NSECs encrypted at rest with AES-256-GCM, derived keys via HKDF.
+        </li>
+        <li>
+          <strong>NIP-46 Bunker Protocol</strong> — Full Nostr Connect implementation for remote signing.
+        </li>
+        <li>
+          <strong>Multi-Identity Support</strong> — Manage multiple Nostr keypairs per user.
+        </li>
+        <li>
+          <strong>Time-Limited Assignments</strong> — Grant temporary identity access with automatic expiration.
+        </li>
+        <li>
+          <strong>Admin Dashboard</strong> — Web UI for managing identities, users, and assignments.
+        </li>
+        <li>
+          <strong>Split Architecture</strong> — Production deployment with NSECs isolated on LAN.
+        </li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>How It Works</h2>
+      <ol>
+        <li>User authenticates via an OAuth provider.</li>
+        <li>User selects a Nostr identity from their assigned pool.</li>
+        <li>Nostr clients connect via NIP-46 for signing — keys never leave the bunker.</li>
+      </ol>
+    </section>
+
+    <section>
+      <h2>Quick Links</h2>
+      <div class="card-grid">
+        <a href="getting-started.html" class="card">
+          <h3>Getting Started</h3>
+          <p>Build from source, configure environment variables, and run the signer locally.</p>
+        </a>
+        <a href="oauth-setup.html" class="card">
+          <h3>OAuth Setup</h3>
+          <p>Register OAuth applications with Google, GitHub, Microsoft, and Apple.</p>
+        </a>
+        <a href="configuration.html" class="card">
+          <h3>Configuration</h3>
+          <p>Full reference for all environment variables and configuration options.</p>
+        </a>
+        <a href="deployment.html" class="card">
+          <h3>Deployment</h3>
+          <p>Deploy to production with Docker, systemd, or the split LAN architecture.</p>
+        </a>
+        <a href="admin-guide.html" class="card">
+          <h3>Admin Guide</h3>
+          <p>Manage identities, users, and assignments through the admin dashboard.</p>
+        </a>
+        <a href="architecture.html" class="card">
+          <h3>Architecture</h3>
+          <p>Understand the system design, NIP-46 flow, and split deployment model.</p>
+        </a>
+        <a href="troubleshooting.html" class="card">
+          <h3>Troubleshooting</h3>
+          <p>Common issues, debugging tips, and solutions for typical problems.</p>
+        </a>
+      </div>
+    </section>
+  </main>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="js/nav.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>
