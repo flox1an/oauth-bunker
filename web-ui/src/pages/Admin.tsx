@@ -99,6 +99,7 @@ const KIND_PRESETS = [
   { label: 'DMs', kinds: [4, 14, 1059], default: false },
   { label: 'Profile updates', kinds: [0], default: false },
   { label: 'Lists', kinds: [30000, 30001, 30003], default: false },
+  { label: 'Files', kinds: [24242, 27235], default: false },
 ] as const
 
 function kindsToPresetLabels(kinds: number[]): string[] {
@@ -238,6 +239,7 @@ export default function Admin() {
   const [identities, setIdentities] = useState<Identity[]>([])
   const [users, setUsers] = useState<User[]>([])
   const [assignments, setAssignments] = useState<Assignment[]>([])
+  const [alwaysAllowedKinds, setAlwaysAllowedKinds] = useState<number[]>([])
   const [dataLoading, setDataLoading] = useState(false)
 
   // Add identity form
@@ -334,10 +336,19 @@ export default function Admin() {
     } catch { /* best-effort */ }
   }, [])
 
+  const fetchConfig = useCallback(async () => {
+    try {
+      const res = await adminFetch('/api/admin/config')
+      if (!res.ok) throw new Error('Failed to fetch config')
+      const data = await res.json()
+      setAlwaysAllowedKinds(data.always_allowed_kinds ?? [])
+    } catch { /* best-effort */ }
+  }, [])
+
   // Fetch all stats on initial auth
   useEffect(() => {
     if (authState !== 'authenticated') return
-    Promise.all([fetchConnections(), fetchUsers(), fetchIdentities(), fetchAssignments()]).catch(() => {})
+    Promise.all([fetchConnections(), fetchUsers(), fetchIdentities(), fetchAssignments(), fetchConfig()]).catch(() => {})
   }, [authState]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Fetch section-specific data when tab changes
@@ -349,11 +360,11 @@ export default function Admin() {
       users: fetchUsers,
       keys: fetchIdentities,
       assignments: async () => {
-        await Promise.all([fetchAssignments(), fetchUsers(), fetchIdentities()])
+        await Promise.all([fetchAssignments(), fetchUsers(), fetchIdentities(), fetchConfig()])
       },
     }
     fetchMap[activeSection]().finally(() => setDataLoading(false))
-  }, [authState, activeSection, fetchConnections, fetchUsers, fetchIdentities, fetchAssignments])
+  }, [authState, activeSection, fetchConnections, fetchUsers, fetchIdentities, fetchAssignments, fetchConfig])
 
   const handleRevokeConnection = async (id: string) => {
     try {
@@ -629,6 +640,7 @@ export default function Admin() {
                   assignments={assignments}
                   users={users}
                   identities={identities}
+                  alwaysAllowedKinds={alwaysAllowedKinds}
                   selectedUserId={selectedUserId}
                   selectedIdentityId={selectedIdentityId}
                   selectedDuration={selectedDuration}
@@ -985,6 +997,7 @@ function AssignmentsSection({
   assignments,
   users,
   identities,
+  alwaysAllowedKinds,
   selectedUserId,
   selectedIdentityId,
   selectedDuration,
@@ -1001,6 +1014,7 @@ function AssignmentsSection({
   assignments: Assignment[]
   users: User[]
   identities: Identity[]
+  alwaysAllowedKinds: number[]
   selectedUserId: string
   selectedIdentityId: string
   selectedDuration: string
@@ -1128,6 +1142,18 @@ function AssignmentsSection({
             : `${selectedKindPresets.length} categor${selectedKindPresets.length === 1 ? 'y' : 'ies'} selected`}
         </p>
       </div>
+
+      {alwaysAllowedKinds.length > 0 && (
+        <div className="mb-6 rounded-lg border border-border bg-muted/30 px-4 py-3">
+          <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-1">Always Allowed Kinds (all users)</p>
+          <div className="flex flex-wrap gap-1.5">
+            {alwaysAllowedKinds.map((kind) => (
+              <Badge key={kind} variant="outline" className="text-xs font-mono">{kind}</Badge>
+            ))}
+          </div>
+          <p className="text-xs text-muted-foreground mt-1">Configured via <code className="text-[10px] bg-muted px-1 py-0.5 rounded">ALWAYS_ALLOWED_KINDS</code> env var</p>
+        </div>
+      )}
 
       {assignments.length === 0 ? (
         <p className="text-sm text-muted-foreground">No assignments.</p>

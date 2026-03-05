@@ -173,6 +173,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/admin/assignments/{id}", delete(api_delete_assignment))
         .route("/api/admin/connections", get(api_admin_list_connections))
         .route("/api/admin/connections/{id}", delete(api_admin_delete_connection))
+        .route("/api/admin/config", get(api_admin_config))
         .route("/api/select-identity", post(api_select_identity))
 }
 
@@ -1186,4 +1187,20 @@ async fn api_admin_delete_connection(
     } else {
         Err((StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "Connection not found"}))).into_response())
     }
+}
+
+// ---------------------------------------------------------------------------
+// API: GET /api/admin/config
+// ---------------------------------------------------------------------------
+
+async fn api_admin_config(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, Response> {
+    let url = format!("{}/api/admin/config", state.config.public_url);
+    verify_admin_auth(&state, &headers, "GET", &url)?;
+
+    Ok(Json(serde_json::json!({
+        "always_allowed_kinds": state.config.always_allowed_kinds,
+    })))
 }

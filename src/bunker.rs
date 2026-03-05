@@ -294,7 +294,9 @@ impl Bunker {
             let event_kind = event_value.get("kind")
                 .and_then(|v| v.as_u64())
                 .ok_or("Missing or invalid 'kind' in event JSON")?;
-            if !allowed_kinds.contains(&event_kind) {
+            if !allowed_kinds.contains(&event_kind)
+                && !self.config.always_allowed_kinds.contains(&event_kind)
+            {
                 return Ok(nip46_error(id, &format!("Event kind {} is not allowed for this assignment", event_kind)));
             }
         }

@@ -17,6 +17,7 @@ pub struct Config {
     pub nostr_relays: Vec<String>,
     pub database_url: String,
     pub admin_pubkeys: Vec<String>,
+    pub always_allowed_kinds: Vec<u64>,
 }
 
 impl Config {
@@ -44,6 +45,12 @@ impl Config {
             .filter(|s| !s.is_empty())
             .collect();
 
+        let always_allowed_kinds: Vec<u64> = env::var("ALWAYS_ALLOWED_KINDS")
+            .unwrap_or_else(|_| "30078".into())
+            .split(',')
+            .filter_map(|s| s.trim().parse::<u64>().ok())
+            .collect();
+
         Ok(Config {
             host: env::var("HOST").unwrap_or_else(|_| "127.0.0.1".into()),
             port: env::var("PORT")
@@ -65,6 +72,7 @@ impl Config {
             database_url: env::var("DATABASE_URL")
                 .unwrap_or_else(|_| "oauth-signer.db".into()),
             admin_pubkeys,
+            always_allowed_kinds,
         })
     }
 }
