@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -30,8 +30,35 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Loader2, Trash2, Wifi, Users, Key, Link, LogOut } from 'lucide-react'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
+import { Loader2, Trash2, Wifi, Users, Key, Link, LogOut, Sun, Moon, Shield, Zap, Copy, Check } from 'lucide-react'
+import { nip19 } from 'nostr-tools'
+import { useEventModel } from 'applesauce-react/hooks'
+import { ProfileModel } from 'applesauce-core/models'
+import type { ProfileContent } from 'applesauce-core/helpers'
+import { requestProfiles } from '@/lib/nostr-profiles'
 import { adminFetch, getNostrPublicKey } from '@/lib/nostr-auth'
+
+/** Request profiles on mount/change; data comes reactively via useProfile */
+function useRequestProfiles(pubkeys: string[]) {
+  const key = useMemo(() => [...pubkeys].sort().join(','), [pubkeys])
+  const requested = useRef<string>('')
+  useEffect(() => {
+    if (key && key !== requested.current) {
+      requested.current = key
+      requestProfiles(pubkeys)
+    }
+  }, [key])
+}
+
+/** Reactive profile for a single pubkey, backed by applesauce EventStore */
+function useProfile(pubkey: string | null | undefined): ProfileContent | undefined {
+  return useEventModel(ProfileModel, pubkey ? [pubkey] : null)
+}
 
 interface Identity {
   id: string
@@ -44,6 +71,7 @@ interface Identity {
 interface User {
   id: string
   email: string | null
+  display_name: string | null
   avatar_url: string | null
   oauth_provider: string
   created_at: number
@@ -56,8 +84,31 @@ interface Assignment {
   user_email: string | null
   identity_pubkey: string | null
   identity_label: string | null
+  allowed_kinds: number[] | null
   expires_at: number
   created_at: number
+}
+
+const KIND_PRESETS = [
+  { label: 'Social notes', kinds: [1, 1111], default: true },
+  { label: 'Reactions', kinds: [7], default: true },
+  { label: 'Reposts', kinds: [6], default: true },
+  { label: 'Zaps', kinds: [9734], default: false },
+  { label: 'Articles', kinds: [30023, 30024, 9802], default: false },
+  { label: 'Videos', kinds: [21, 22, 34235, 34236, 30311], default: false },
+  { label: 'DMs', kinds: [4, 14, 1059], default: false },
+  { label: 'Profile updates', kinds: [0], default: false },
+  { label: 'Lists', kinds: [30000, 30001, 30003], default: false },
+] as const
+
+function kindsToPresetLabels(kinds: number[]): string[] {
+  const labels: string[] = []
+  for (const preset of KIND_PRESETS) {
+    if (preset.kinds.every((k) => kinds.includes(k))) {
+      labels.push(preset.label)
+    }
+  }
+  return labels
 }
 
 interface Connection {
@@ -79,6 +130,33 @@ function truncate(str: string, len: number = 16): string {
   return str.slice(0, len / 2) + '...' + str.slice(-len / 2)
 }
 
+function ProfileAvatar({ picture, fallbackIcon: Icon = Key }: { picture?: string; fallbackIcon?: typeof Key }) {
+  return picture ? (
+    <img src={picture} alt="" className="h-7 w-7 rounded-full object-cover ring-1 ring-border shrink-0" />
+  ) : (
+    <div className="h-7 w-7 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
+      <Icon className="h-3.5 w-3.5 text-primary/60" />
+    </div>
+  )
+}
+
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false)
+  const handleCopy = () => {
+    navigator.clipboard.writeText(text)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1500)
+  }
+  return (
+    <button
+      onClick={handleCopy}
+      className="h-6 w-6 shrink-0 inline-flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors cursor-pointer"
+    >
+      {copied ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
+    </button>
+  )
+}
+
 function relativeTime(timestamp: number): string {
   const now = Math.floor(Date.now() / 1000)
   const diff = now - timestamp
@@ -89,18 +167,71 @@ function relativeTime(timestamp: number): string {
 }
 
 const NAV_ITEMS: { key: Section; label: string; icon: typeof Wifi }[] = [
-  { key: 'sessions', label: 'Sessions', icon: Wifi },
-  { key: 'users', label: 'Users', icon: Users },
   { key: 'keys', label: 'Secret Keys', icon: Key },
+  { key: 'users', label: 'Users', icon: Users },
   { key: 'assignments', label: 'Assignments', icon: Link },
+  { key: 'sessions', label: 'Sessions', icon: Wifi },
 ]
 
+// ---------------------------------------------------------------------------
+// Theme toggle hook
+// ---------------------------------------------------------------------------
+
+function useTheme() {
+  const [dark, setDark] = useState(() => document.documentElement.classList.contains('dark'))
+
+  const toggle = useCallback(() => {
+    const next = !dark
+    setDark(next)
+    document.documentElement.classList.toggle('dark', next)
+    localStorage.setItem('theme', next ? 'dark' : 'light')
+  }, [dark])
+
+  useEffect(() => {
+    const stored = localStorage.getItem('theme')
+    if (stored === 'light') {
+      setDark(false)
+      document.documentElement.classList.remove('dark')
+    } else {
+      setDark(true)
+      document.documentElement.classList.add('dark')
+    }
+  }, [])
+
+  return { dark, toggle }
+}
+
+// ---------------------------------------------------------------------------
+// Stat card component
+// ---------------------------------------------------------------------------
+
+function StatCard({ label, value, icon: Icon }: { label: string; value: number; icon: typeof Wifi }) {
+  return (
+    <div className="stat-card border border-border p-4">
+      <div className="relative z-10 flex items-center justify-between">
+        <div>
+          <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">{label}</p>
+          <p className="text-2xl font-semibold mt-1 tracking-tight">{value}</p>
+        </div>
+        <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center">
+          <Icon className="h-5 w-5 text-primary" />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Main Admin component
+// ---------------------------------------------------------------------------
+
 export default function Admin() {
+  const { dark, toggle: toggleTheme } = useTheme()
   const [authState, setAuthState] = useState<'loading' | 'no-extension' | 'connect' | 'unauthorized' | 'authenticated'>('loading')
   const [adminPubkey, setAdminPubkey] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  const [activeSection, setActiveSection] = useState<Section>('sessions')
+  const [activeSection, setActiveSection] = useState<Section>('keys')
 
   // Data states
   const [connections, setConnections] = useState<Connection[]>([])
@@ -119,16 +250,30 @@ export default function Admin() {
   const [selectedUserId, setSelectedUserId] = useState('')
   const [selectedIdentityId, setSelectedIdentityId] = useState('')
   const [selectedDuration, setSelectedDuration] = useState('')
+  const [selectedKindPresets, setSelectedKindPresets] = useState<string[]>(
+    KIND_PRESETS.filter((p) => p.default).map((p) => p.label)
+  )
   const [assignLoading, setAssignLoading] = useState(false)
   const [assignError, setAssignError] = useState<string | null>(null)
 
   // Check for NIP-07 extension on mount
   useEffect(() => {
-    if (!window.nostr) {
-      setAuthState('no-extension')
+    if (window.nostr) {
+      setAuthState('connect')
       return
     }
-    setAuthState('connect')
+    let attempts = 0
+    const interval = setInterval(() => {
+      attempts++
+      if (window.nostr) {
+        clearInterval(interval)
+        setAuthState('connect')
+      } else if (attempts >= 20) {
+        clearInterval(interval)
+        setAuthState('no-extension')
+      }
+    }, 100)
+    return () => clearInterval(interval)
   }, [])
 
   const handleConnect = async () => {
@@ -162,9 +307,7 @@ export default function Admin() {
       const res = await adminFetch('/api/admin/connections')
       if (!res.ok) throw new Error('Failed to fetch connections')
       setConnections(await res.json())
-    } catch {
-      // best-effort
-    }
+    } catch { /* best-effort */ }
   }, [])
 
   const fetchIdentities = useCallback(async () => {
@@ -172,9 +315,7 @@ export default function Admin() {
       const res = await adminFetch('/api/admin/identities')
       if (!res.ok) throw new Error('Failed to fetch identities')
       setIdentities(await res.json())
-    } catch {
-      // best-effort
-    }
+    } catch { /* best-effort */ }
   }, [])
 
   const fetchUsers = useCallback(async () => {
@@ -182,9 +323,7 @@ export default function Admin() {
       const res = await adminFetch('/api/admin/users')
       if (!res.ok) throw new Error('Failed to fetch users')
       setUsers(await res.json())
-    } catch {
-      // best-effort
-    }
+    } catch { /* best-effort */ }
   }, [])
 
   const fetchAssignments = useCallback(async () => {
@@ -192,12 +331,16 @@ export default function Admin() {
       const res = await adminFetch('/api/admin/assignments')
       if (!res.ok) throw new Error('Failed to fetch assignments')
       setAssignments(await res.json())
-    } catch {
-      // best-effort
-    }
+    } catch { /* best-effort */ }
   }, [])
 
-  // Fetch data when section changes or auth succeeds
+  // Fetch all stats on initial auth
+  useEffect(() => {
+    if (authState !== 'authenticated') return
+    Promise.all([fetchConnections(), fetchUsers(), fetchIdentities(), fetchAssignments()]).catch(() => {})
+  }, [authState]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Fetch section-specific data when tab changes
   useEffect(() => {
     if (authState !== 'authenticated') return
     setDataLoading(true)
@@ -215,12 +358,8 @@ export default function Admin() {
   const handleRevokeConnection = async (id: string) => {
     try {
       const res = await adminFetch(`/api/admin/connections/${id}`, 'DELETE')
-      if (res.ok) {
-        setConnections((prev) => prev.filter((c) => c.id !== id))
-      }
-    } catch {
-      // user can retry
-    }
+      if (res.ok) setConnections((prev) => prev.filter((c) => c.id !== id))
+    } catch { /* user can retry */ }
   }
 
   const handleAddIdentity = async () => {
@@ -247,22 +386,22 @@ export default function Admin() {
   const handleDeleteIdentity = async (id: string) => {
     try {
       const res = await adminFetch(`/api/admin/identities/${id}`, 'DELETE')
-      if (res.ok) {
-        setIdentities((prev) => prev.filter((i) => i.id !== id))
-      }
-    } catch {
-      // user can retry
-    }
+      if (res.ok) setIdentities((prev) => prev.filter((i) => i.id !== id))
+    } catch { /* user can retry */ }
   }
 
   const handleCreateAssignment = async () => {
     setAssignLoading(true)
     setAssignError(null)
     try {
+      const allowedKinds = KIND_PRESETS
+        .filter((p) => selectedKindPresets.includes(p.label))
+        .flatMap((p) => [...p.kinds])
       const res = await adminFetch('/api/admin/assignments', 'POST', {
         user_id: selectedUserId,
         identity_id: selectedIdentityId,
         duration: selectedDuration,
+        allowed_kinds: allowedKinds.length > 0 ? allowedKinds : null,
       })
       if (!res.ok) {
         const data = await res.json()
@@ -271,6 +410,7 @@ export default function Admin() {
       setSelectedUserId('')
       setSelectedIdentityId('')
       setSelectedDuration('')
+      setSelectedKindPresets(KIND_PRESETS.filter((p) => p.default).map((p) => p.label))
       await fetchAssignments()
     } catch (e) {
       setAssignError(e instanceof Error ? e.message : 'Failed')
@@ -279,15 +419,23 @@ export default function Admin() {
     }
   }
 
+  const handleDeleteUser = async (id: string) => {
+    try {
+      const res = await adminFetch(`/api/admin/users/${id}`, 'DELETE')
+      if (res.ok) {
+        setUsers((prev) => prev.filter((u) => u.id !== id))
+        // Also remove related assignments and connections from local state
+        setAssignments((prev) => prev.filter((a) => a.user_id !== id))
+        setConnections((prev) => prev.filter((c) => c.user_id !== id))
+      }
+    } catch { /* user can retry */ }
+  }
+
   const handleDeleteAssignment = async (id: string) => {
     try {
       const res = await adminFetch(`/api/admin/assignments/${id}`, 'DELETE')
-      if (res.ok) {
-        setAssignments((prev) => prev.filter((a) => a.id !== id))
-      }
-    } catch {
-      // user can retry
-    }
+      if (res.ok) setAssignments((prev) => prev.filter((a) => a.id !== id))
+    } catch { /* user can retry */ }
   }
 
   const handleLogout = () => {
@@ -301,28 +449,36 @@ export default function Admin() {
     setActiveSection('sessions')
   }
 
-  // --- Auth gate screens (unchanged) ---
+  // --- Auth gate screens ---
 
   if (authState === 'loading') {
     return (
-      <div className="flex min-h-screen items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      <div className="flex min-h-screen items-center justify-center grid-bg">
+        <div className="flex flex-col items-center gap-3">
+          <div className="h-12 w-12 rounded-xl bg-primary/10 flex items-center justify-center animate-pulse">
+            <Shield className="h-6 w-6 text-primary" />
+          </div>
+          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        </div>
       </div>
     )
   }
 
   if (authState === 'no-extension') {
     return (
-      <div className="flex min-h-screen items-center justify-center px-4">
-        <Card className="w-full max-w-[500px]">
-          <CardHeader>
-            <CardTitle>Nostr Extension Required</CardTitle>
-            <CardDescription>
-              Install a NIP-07 browser extension (like nos2x or Alby) to access the admin panel.
+      <div className="flex min-h-screen items-center justify-center px-4 grid-bg">
+        <Card className="w-full max-w-[460px] border-border/50 shadow-xl">
+          <CardHeader className="text-center pb-2">
+            <div className="mx-auto mb-3 h-14 w-14 rounded-2xl bg-primary/10 flex items-center justify-center">
+              <Shield className="h-7 w-7 text-primary" />
+            </div>
+            <CardTitle className="text-xl tracking-tight">Extension Required</CardTitle>
+            <CardDescription className="text-sm">
+              Install a NIP-07 browser extension (nos2x, Alby, etc.) to access the admin panel.
             </CardDescription>
           </CardHeader>
-          <CardContent>
-            <Button variant="outline" onClick={() => window.location.reload()}>
+          <CardContent className="pt-2 flex justify-center">
+            <Button variant="outline" onClick={() => window.location.reload()} className="px-6">
               Retry
             </Button>
           </CardContent>
@@ -333,17 +489,20 @@ export default function Admin() {
 
   if (authState === 'connect') {
     return (
-      <div className="flex min-h-screen items-center justify-center px-4">
-        <Card className="w-full max-w-[500px]">
-          <CardHeader>
-            <CardTitle>Admin Panel</CardTitle>
-            <CardDescription>
-              Connect with your Nostr identity to access the admin panel.
+      <div className="flex min-h-screen items-center justify-center px-4 grid-bg">
+        <Card className="w-full max-w-[460px] border-border/50 shadow-xl">
+          <CardHeader className="text-center pb-2">
+            <div className="mx-auto mb-3 h-14 w-14 rounded-2xl bg-primary/10 flex items-center justify-center">
+              <Zap className="h-7 w-7 text-primary" />
+            </div>
+            <CardTitle className="text-xl tracking-tight">Nostr Signer Admin</CardTitle>
+            <CardDescription className="text-sm">
+              Authenticate with your Nostr identity to continue.
             </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4">
-            {error && <p className="text-sm text-destructive">{error}</p>}
-            <Button onClick={handleConnect}>
+          <CardContent className="space-y-4 pt-2 flex flex-col items-center">
+            {error && <p className="text-sm text-destructive text-center">{error}</p>}
+            <Button onClick={handleConnect} className="px-8 font-medium">
               Connect with Nostr
             </Button>
           </CardContent>
@@ -354,16 +513,19 @@ export default function Admin() {
 
   if (authState === 'unauthorized') {
     return (
-      <div className="flex min-h-screen items-center justify-center px-4">
-        <Card className="w-full max-w-[500px]">
-          <CardHeader>
-            <CardTitle>Not Authorized</CardTitle>
-            <CardDescription>
-              Your pubkey ({adminPubkey ? truncate(adminPubkey, 20) : 'unknown'}) is not in the admin allowlist.
+      <div className="flex min-h-screen items-center justify-center px-4 grid-bg">
+        <Card className="w-full max-w-[460px] border-border/50 shadow-xl">
+          <CardHeader className="text-center pb-2">
+            <div className="mx-auto mb-3 h-14 w-14 rounded-2xl bg-destructive/10 flex items-center justify-center">
+              <Shield className="h-7 w-7 text-destructive" />
+            </div>
+            <CardTitle className="text-xl tracking-tight">Not Authorized</CardTitle>
+            <CardDescription className="text-sm">
+              <span className="font-mono text-xs">{adminPubkey ? truncate(adminPubkey, 20) : 'unknown'}</span> is not in the admin allowlist.
             </CardDescription>
           </CardHeader>
-          <CardContent>
-            <Button variant="outline" onClick={() => { setAuthState('connect'); setError(null) }}>
+          <CardContent className="pt-2 flex justify-center">
+            <Button variant="outline" onClick={() => { setAuthState('connect'); setError(null) }} className="px-6">
               Try Another Key
             </Button>
           </CardContent>
@@ -372,24 +534,35 @@ export default function Admin() {
     )
   }
 
-  // --- Authenticated: sidebar + content layout ---
+  // --- Authenticated layout ---
 
   return (
     <div className="flex min-h-screen">
       {/* Sidebar */}
-      <aside className="w-[200px] shrink-0 border-r border-border bg-muted/30 flex flex-col">
-        <div className="p-4">
-          <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Admin</h2>
+      <aside className="w-[220px] shrink-0 border-r border-border glass-sidebar flex flex-col">
+        <div className="p-5 pb-3">
+          <div className="flex items-center gap-2.5">
+            <div className="h-8 w-8 rounded-lg bg-primary/15 flex items-center justify-center">
+              <Zap className="h-4 w-4 text-primary" />
+            </div>
+            <div>
+              <h2 className="text-sm font-semibold tracking-tight">Signer Admin</h2>
+              <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-widest">Control Panel</p>
+            </div>
+          </div>
         </div>
-        <nav className="flex-1 px-2 space-y-1">
+
+        <div className="glow-line mx-4 mb-3 opacity-50" />
+
+        <nav className="flex-1 px-3 space-y-0.5">
           {NAV_ITEMS.map(({ key, label, icon: Icon }) => (
             <button
               key={key}
               onClick={() => setActiveSection(key)}
-              className={`w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm cursor-pointer transition-colors ${
+              className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm cursor-pointer transition-all duration-200 ${
                 activeSection === key
-                  ? 'bg-accent text-accent-foreground'
-                  : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'
+                  ? 'nav-active font-medium'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-accent/50'
               }`}
             >
               <Icon className="h-4 w-4" />
@@ -397,10 +570,19 @@ export default function Admin() {
             </button>
           ))}
         </nav>
-        <div className="px-2 pb-4">
+
+        <div className="px-3 pb-3 space-y-1">
+          <div className="glow-line mx-1 mb-2 opacity-30" />
+          <button
+            onClick={toggleTheme}
+            className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm cursor-pointer text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-all duration-200"
+          >
+            {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+            {dark ? 'Light Mode' : 'Dark Mode'}
+          </button>
           <button
             onClick={handleLogout}
-            className="w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm cursor-pointer text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
+            className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm cursor-pointer text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-all duration-200"
           >
             <LogOut className="h-4 w-4" />
             Logout
@@ -409,151 +591,258 @@ export default function Admin() {
       </aside>
 
       {/* Main content */}
-      <main className="flex-1 p-6 overflow-auto">
-        {dataLoading ? (
-          <div className="flex items-center justify-center py-12">
-            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      <main className="flex-1 overflow-auto grid-bg">
+        {/* Stat bar */}
+        <div className="p-6 pb-0">
+          <div className="grid grid-cols-4 gap-4">
+            <StatCard label="Sessions" value={connections.length} icon={Wifi} />
+            <StatCard label="Users" value={users.length} icon={Users} />
+            <StatCard label="Identities" value={identities.length} icon={Key} />
+            <StatCard label="Assignments" value={assignments.length} icon={Link} />
           </div>
-        ) : (
-          <>
-            {activeSection === 'sessions' && <SessionsTable connections={connections} onRevoke={handleRevokeConnection} />}
-            {activeSection === 'users' && <UsersTable users={users} />}
-            {activeSection === 'keys' && (
-              <KeysSection
-                identities={identities}
-                nsecInput={nsecInput}
-                labelInput={labelInput}
-                addLoading={addLoading}
-                addError={addError}
-                onNsecChange={setNsecInput}
-                onLabelChange={setLabelInput}
-                onAdd={handleAddIdentity}
-                onDelete={handleDeleteIdentity}
-              />
-            )}
-            {activeSection === 'assignments' && (
-              <AssignmentsSection
-                assignments={assignments}
-                users={users}
-                identities={identities}
-                selectedUserId={selectedUserId}
-                selectedIdentityId={selectedIdentityId}
-                selectedDuration={selectedDuration}
-                assignLoading={assignLoading}
-                assignError={assignError}
-                onUserChange={setSelectedUserId}
-                onIdentityChange={setSelectedIdentityId}
-                onDurationChange={setSelectedDuration}
-                onCreate={handleCreateAssignment}
-                onDelete={handleDeleteAssignment}
-              />
-            )}
-          </>
-        )}
+        </div>
+
+        <div className="p-6">
+          {dataLoading ? (
+            <div className="flex items-center justify-center py-16">
+              <Loader2 className="h-6 w-6 animate-spin text-primary/60" />
+            </div>
+          ) : (
+            <>
+              {activeSection === 'sessions' && <SessionsTable connections={connections} users={users} onRevoke={handleRevokeConnection} />}
+              {activeSection === 'users' && <UsersTable users={users} onDelete={handleDeleteUser} />}
+              {activeSection === 'keys' && (
+                <KeysSection
+                  identities={identities}
+                  nsecInput={nsecInput}
+                  labelInput={labelInput}
+                  addLoading={addLoading}
+                  addError={addError}
+                  onNsecChange={setNsecInput}
+                  onLabelChange={setLabelInput}
+                  onAdd={handleAddIdentity}
+                  onDelete={handleDeleteIdentity}
+                />
+              )}
+              {activeSection === 'assignments' && (
+                <AssignmentsSection
+                  assignments={assignments}
+                  users={users}
+                  identities={identities}
+                  selectedUserId={selectedUserId}
+                  selectedIdentityId={selectedIdentityId}
+                  selectedDuration={selectedDuration}
+                  selectedKindPresets={selectedKindPresets}
+                  assignLoading={assignLoading}
+                  assignError={assignError}
+                  onUserChange={setSelectedUserId}
+                  onIdentityChange={setSelectedIdentityId}
+                  onDurationChange={setSelectedDuration}
+                  onKindPresetsChange={setSelectedKindPresets}
+                  onCreate={handleCreateAssignment}
+                  onDelete={handleDeleteAssignment}
+                />
+              )}
+            </>
+          )}
+        </div>
       </main>
     </div>
   )
 }
 
-// --- Section components ---
+// ---------------------------------------------------------------------------
+// Section heading
+// ---------------------------------------------------------------------------
 
-function SessionsTable({ connections, onRevoke }: { connections: Connection[]; onRevoke: (id: string) => void }) {
+function SectionHeading({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="mb-5">
+      <h1 className="text-lg font-semibold tracking-tight">{children}</h1>
+      <div className="glow-line mt-2 opacity-40" />
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Section components
+// ---------------------------------------------------------------------------
+
+function SessionsTable({ connections, users, onRevoke }: { connections: Connection[]; users: User[]; onRevoke: (id: string) => void }) {
+  const allPubkeys = useMemo(() => {
+    const set = new Set<string>()
+    for (const c of connections) {
+      set.add(c.client_pubkey)
+      if (c.identity_pubkey) set.add(c.identity_pubkey)
+    }
+    return [...set]
+  }, [connections])
+  useRequestProfiles(allPubkeys)
+
   return (
     <div>
-      <h1 className="text-xl font-semibold mb-4">Sessions</h1>
+      <SectionHeading>Sessions</SectionHeading>
       {connections.length === 0 ? (
         <p className="text-sm text-muted-foreground">No active sessions.</p>
       ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>User</TableHead>
-              <TableHead>Identity</TableHead>
-              <TableHead>Client</TableHead>
-              <TableHead>Relay</TableHead>
-              <TableHead>Last Used</TableHead>
-              <TableHead className="w-[80px]">Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {connections.map((conn) => (
-              <TableRow key={conn.id}>
-                <TableCell className="text-sm">{conn.user_email || truncate(conn.user_id)}</TableCell>
-                <TableCell className="text-sm font-mono">
-                  {conn.identity_label || (conn.identity_pubkey ? truncate(conn.identity_pubkey) : '—')}
-                </TableCell>
-                <TableCell className="text-sm font-mono">{truncate(conn.client_pubkey)}</TableCell>
-                <TableCell className="text-sm">{conn.relay_url}</TableCell>
-                <TableCell className="text-sm text-muted-foreground">{relativeTime(conn.last_used_at)}</TableCell>
-                <TableCell>
-                  <AlertDialog>
-                    <AlertDialogTrigger asChild>
-                      <Button variant="destructive" size="icon" className="h-8 w-8">
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </AlertDialogTrigger>
-                    <AlertDialogContent>
-                      <AlertDialogHeader>
-                        <AlertDialogTitle>Revoke session?</AlertDialogTitle>
-                        <AlertDialogDescription>
-                          This will disconnect the client immediately.
-                        </AlertDialogDescription>
-                      </AlertDialogHeader>
-                      <AlertDialogFooter>
-                        <AlertDialogCancel>Cancel</AlertDialogCancel>
-                        <AlertDialogAction onClick={() => onRevoke(conn.id)}>
-                          Revoke
-                        </AlertDialogAction>
-                      </AlertDialogFooter>
-                    </AlertDialogContent>
-                  </AlertDialog>
-                </TableCell>
+        <div className="rounded-lg border border-border overflow-hidden">
+          <Table>
+            <TableHeader>
+              <TableRow className="bg-muted/30 hover:bg-muted/30">
+                <TableHead className="font-semibold text-xs uppercase tracking-wider">User</TableHead>
+                <TableHead className="font-semibold text-xs uppercase tracking-wider">Identity</TableHead>
+                <TableHead className="font-semibold text-xs uppercase tracking-wider">Client</TableHead>
+                <TableHead className="font-semibold text-xs uppercase tracking-wider">Relay</TableHead>
+                <TableHead className="font-semibold text-xs uppercase tracking-wider">Last Used</TableHead>
+                <TableHead className="w-[80px]"></TableHead>
               </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+            </TableHeader>
+            <TableBody>
+              {connections.map((conn) => (
+                <SessionRow key={conn.id} conn={conn} user={users.find((u) => u.id === conn.user_id)} onRevoke={onRevoke} />
+              ))}
+            </TableBody>
+          </Table>
+        </div>
       )}
     </div>
   )
 }
 
-function UsersTable({ users }: { users: User[] }) {
+function SessionRow({ conn, user, onRevoke }: { conn: Connection; user?: User; onRevoke: (id: string) => void }) {
+  const clientProfile = useProfile(conn.client_pubkey)
+  const identityProfile = useProfile(conn.identity_pubkey)
+  const clientName = clientProfile?.display_name || clientProfile?.name
+  const npub = conn.identity_pubkey ? nip19.npubEncode(conn.identity_pubkey) : null
+
+  return (
+    <TableRow className="hover:bg-accent/30 transition-colors">
+      <TableCell>
+        <div className="flex items-center gap-2">
+          {user?.avatar_url ? (
+            <img src={user.avatar_url} alt="" className="h-7 w-7 rounded-full object-cover ring-1 ring-border shrink-0" />
+          ) : (
+            <div className="h-7 w-7 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
+              <Users className="h-3.5 w-3.5 text-primary/60" />
+            </div>
+          )}
+          <span className="text-sm">{user?.display_name || conn.user_email || truncate(conn.user_id)}</span>
+        </div>
+      </TableCell>
+      <TableCell>
+        <div className="flex items-center gap-2">
+          <ProfileAvatar picture={identityProfile?.picture} fallbackIcon={Key} />
+          <span className="text-sm font-mono text-primary/80">
+            {npub ? truncate(npub, 24) : '\u2014'}
+          </span>
+        </div>
+      </TableCell>
+      <TableCell>
+        <div className="flex items-center gap-2">
+          {clientProfile?.picture && (
+            <img src={clientProfile.picture} alt="" className="h-7 w-7 rounded-full object-cover ring-1 ring-border" />
+          )}
+          <span className={clientName ? 'text-sm' : 'text-sm font-mono'}>
+            {clientName || truncate(conn.client_pubkey)}
+          </span>
+        </div>
+      </TableCell>
+      <TableCell className="text-sm text-muted-foreground">{conn.relay_url}</TableCell>
+      <TableCell className="text-sm text-muted-foreground">{relativeTime(conn.last_used_at)}</TableCell>
+      <TableCell>
+        <AlertDialog>
+          <AlertDialogTrigger asChild>
+            <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10">
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          </AlertDialogTrigger>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Revoke session?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This will disconnect the client immediately.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction onClick={() => onRevoke(conn.id)}>
+                Revoke
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      </TableCell>
+    </TableRow>
+  )
+}
+
+function UsersTable({ users, onDelete }: { users: User[]; onDelete: (id: string) => void }) {
   return (
     <div>
-      <h1 className="text-xl font-semibold mb-4">Users</h1>
+      <SectionHeading>Users</SectionHeading>
       {users.length === 0 ? (
         <p className="text-sm text-muted-foreground">No registered users.</p>
       ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead className="w-[50px]">Avatar</TableHead>
-              <TableHead>Email</TableHead>
-              <TableHead>Provider</TableHead>
-              <TableHead>Joined</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {users.map((user) => (
-              <TableRow key={user.id}>
-                <TableCell>
-                  {user.avatar_url ? (
-                    <img src={user.avatar_url} alt="" className="h-8 w-8 rounded-full" />
-                  ) : (
-                    <div className="h-8 w-8 rounded-full bg-muted" />
-                  )}
-                </TableCell>
-                <TableCell className="text-sm">{user.email || 'No email'}</TableCell>
-                <TableCell>
-                  <Badge variant="secondary" className="text-xs">{user.oauth_provider}</Badge>
-                </TableCell>
-                <TableCell className="text-sm text-muted-foreground">
-                  {new Date(user.created_at * 1000).toLocaleDateString()}
-                </TableCell>
+        <div className="rounded-lg border border-border overflow-hidden">
+          <Table>
+            <TableHeader>
+              <TableRow className="bg-muted/30 hover:bg-muted/30">
+                <TableHead className="w-[50px]"></TableHead>
+                <TableHead className="font-semibold text-xs uppercase tracking-wider">Username</TableHead>
+                <TableHead className="font-semibold text-xs uppercase tracking-wider">Email</TableHead>
+                <TableHead className="font-semibold text-xs uppercase tracking-wider">Provider</TableHead>
+                <TableHead className="font-semibold text-xs uppercase tracking-wider">Joined</TableHead>
+                <TableHead className="w-[80px]"></TableHead>
               </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+            </TableHeader>
+            <TableBody>
+              {users.map((user) => (
+                <TableRow key={user.id} className="hover:bg-accent/30 transition-colors">
+                  <TableCell>
+                    {user.avatar_url ? (
+                      <img src={user.avatar_url} alt="" className="h-7 w-7 rounded-full ring-1 ring-border" />
+                    ) : (
+                      <div className="h-7 w-7 rounded-full bg-primary/10 flex items-center justify-center">
+                        <Users className="h-3.5 w-3.5 text-primary/60" />
+                      </div>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-sm">{user.display_name || '\u2014'}</TableCell>
+                  <TableCell className="text-sm">{user.email || '\u2014'}</TableCell>
+                  <TableCell>
+                    <Badge variant="secondary" className="text-xs font-mono">{user.oauth_provider}</Badge>
+                  </TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
+                    {new Date(user.created_at * 1000).toLocaleDateString()}
+                  </TableCell>
+                  <TableCell>
+                    <AlertDialog>
+                      <AlertDialogTrigger asChild>
+                        <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10">
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </AlertDialogTrigger>
+                      <AlertDialogContent>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>Delete user?</AlertDialogTitle>
+                          <AlertDialogDescription>
+                            This will permanently delete the user and all their sessions, assignments, and connections.
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel>Cancel</AlertDialogCancel>
+                          <AlertDialogAction onClick={() => onDelete(user.id)}>
+                            Delete
+                          </AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
       )}
     </div>
   )
@@ -580,25 +869,27 @@ function KeysSection({
   onAdd: () => void
   onDelete: (id: string) => void
 }) {
+  const identityPubkeys = useMemo(() => identities.map((i) => i.pubkey), [identities])
+  useRequestProfiles(identityPubkeys)
+
   return (
     <div>
-      <h1 className="text-xl font-semibold mb-4">Secret Keys</h1>
+      <SectionHeading>Secret Keys</SectionHeading>
 
-      {/* Add identity inline form */}
       <div className="flex items-end gap-3 mb-6">
-        <div className="space-y-1">
-          <Label htmlFor="nsec" className="text-xs">nsec</Label>
+        <div className="space-y-1.5">
+          <Label htmlFor="nsec" className="text-xs font-medium uppercase tracking-wider text-muted-foreground">nsec</Label>
           <Input
             id="nsec"
             type="password"
             placeholder="nsec1..."
             value={nsecInput}
             onChange={(e) => onNsecChange(e.target.value)}
-            className="w-[280px]"
+            className="w-[280px] font-mono text-sm"
           />
         </div>
-        <div className="space-y-1">
-          <Label htmlFor="label" className="text-xs">Label</Label>
+        <div className="space-y-1.5">
+          <Label htmlFor="label" className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Label</Label>
           <Input
             id="label"
             type="text"
@@ -614,7 +905,7 @@ function KeysSection({
           size="sm"
         >
           {addLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-          Add
+          Add Key
         </Button>
         {addError && <p className="text-sm text-destructive">{addError}</p>}
       </div>
@@ -622,50 +913,71 @@ function KeysSection({
       {identities.length === 0 ? (
         <p className="text-sm text-muted-foreground">No identities in the pool.</p>
       ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Pubkey</TableHead>
-              <TableHead>Label</TableHead>
-              <TableHead>Connections</TableHead>
-              <TableHead className="w-[80px]">Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {identities.map((identity) => (
-              <TableRow key={identity.id}>
-                <TableCell className="text-sm font-mono">{truncate(identity.pubkey, 24)}</TableCell>
-                <TableCell className="text-sm">{identity.label || '—'}</TableCell>
-                <TableCell className="text-sm">{identity.active_connections}</TableCell>
-                <TableCell>
-                  <AlertDialog>
-                    <AlertDialogTrigger asChild>
-                      <Button variant="destructive" size="icon" className="h-8 w-8">
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </AlertDialogTrigger>
-                    <AlertDialogContent>
-                      <AlertDialogHeader>
-                        <AlertDialogTitle>Delete identity?</AlertDialogTitle>
-                        <AlertDialogDescription>
-                          This will remove the identity from the pool. All connections using this identity will stop working.
-                        </AlertDialogDescription>
-                      </AlertDialogHeader>
-                      <AlertDialogFooter>
-                        <AlertDialogCancel>Cancel</AlertDialogCancel>
-                        <AlertDialogAction onClick={() => onDelete(identity.id)}>
-                          Delete
-                        </AlertDialogAction>
-                      </AlertDialogFooter>
-                    </AlertDialogContent>
-                  </AlertDialog>
-                </TableCell>
+        <div className="rounded-lg border border-border overflow-hidden">
+          <Table>
+            <TableHeader>
+              <TableRow className="bg-muted/30 hover:bg-muted/30">
+                <TableHead className="font-semibold text-xs uppercase tracking-wider">Identity</TableHead>
+                <TableHead className="font-semibold text-xs uppercase tracking-wider">Label</TableHead>
+                <TableHead className="font-semibold text-xs uppercase tracking-wider">Connections</TableHead>
+                <TableHead className="w-[80px]"></TableHead>
               </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+            </TableHeader>
+            <TableBody>
+              {identities.map((identity) => (
+                <KeyRow key={identity.id} identity={identity} onDelete={onDelete} />
+              ))}
+            </TableBody>
+          </Table>
+        </div>
       )}
     </div>
+  )
+}
+
+function KeyRow({ identity, onDelete }: { identity: Identity; onDelete: (id: string) => void }) {
+  const profile = useProfile(identity.pubkey)
+  const npub = nip19.npubEncode(identity.pubkey)
+
+  return (
+    <TableRow className="hover:bg-accent/30 transition-colors">
+      <TableCell>
+        <div className="flex items-center gap-2.5">
+          <ProfileAvatar picture={profile?.picture} />
+          <span className="text-sm font-mono text-primary/80">{truncate(npub, 24)}</span>
+          <CopyButton text={npub} />
+        </div>
+      </TableCell>
+      <TableCell className="text-sm">{identity.label || '\u2014'}</TableCell>
+      <TableCell>
+        <span className="inline-flex items-center justify-center h-6 min-w-[24px] rounded-md bg-primary/10 text-primary text-xs font-semibold px-1.5">
+          {identity.active_connections}
+        </span>
+      </TableCell>
+      <TableCell>
+        <AlertDialog>
+          <AlertDialogTrigger asChild>
+            <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10">
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          </AlertDialogTrigger>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete identity?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This will remove the identity from the pool. All connections using this identity will stop working.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction onClick={() => onDelete(identity.id)}>
+                Delete
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      </TableCell>
+    </TableRow>
   )
 }
 
@@ -676,11 +988,13 @@ function AssignmentsSection({
   selectedUserId,
   selectedIdentityId,
   selectedDuration,
+  selectedKindPresets,
   assignLoading,
   assignError,
   onUserChange,
   onIdentityChange,
   onDurationChange,
+  onKindPresetsChange,
   onCreate,
   onDelete,
 }: {
@@ -690,22 +1004,38 @@ function AssignmentsSection({
   selectedUserId: string
   selectedIdentityId: string
   selectedDuration: string
+  selectedKindPresets: string[]
   assignLoading: boolean
   assignError: string | null
   onUserChange: (v: string) => void
   onIdentityChange: (v: string) => void
   onDurationChange: (v: string) => void
+  onKindPresetsChange: (v: string[]) => void
   onCreate: () => void
   onDelete: (id: string) => void
 }) {
+  const identityPubkeys = useMemo(
+    () => [...new Set(assignments.map((a) => a.identity_pubkey).filter(Boolean) as string[])],
+    [assignments],
+  )
+  useRequestProfiles(identityPubkeys)
+
+  const togglePreset = (label: string) => {
+    onKindPresetsChange(
+      selectedKindPresets.includes(label)
+        ? selectedKindPresets.filter((l) => l !== label)
+        : [...selectedKindPresets, label]
+    )
+  }
+
   return (
     <div>
-      <h1 className="text-xl font-semibold mb-4">Assignments</h1>
+      <SectionHeading>Assignments</SectionHeading>
 
-      {/* New assignment inline form */}
-      <div className="flex items-end gap-3 mb-6 flex-wrap">
-        <div className="space-y-1">
-          <Label className="text-xs">User</Label>
+      {/* Form */}
+      <div className="flex items-end gap-3 mb-4 flex-wrap">
+        <div className="space-y-1.5">
+          <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">User</Label>
           <Select value={selectedUserId} onValueChange={onUserChange}>
             <SelectTrigger className="w-[200px]">
               <SelectValue placeholder="Select user" />
@@ -713,14 +1043,23 @@ function AssignmentsSection({
             <SelectContent>
               {users.map((user) => (
                 <SelectItem key={user.id} value={user.id}>
-                  {user.email || truncate(user.id)}
+                  <span className="flex items-center gap-2">
+                    {user.avatar_url ? (
+                      <img src={user.avatar_url} alt="" className="h-5 w-5 rounded-full shrink-0" />
+                    ) : (
+                      <span className="h-5 w-5 rounded-full bg-primary/10 shrink-0 inline-flex items-center justify-center">
+                        <Users className="h-3 w-3 text-primary/60" />
+                      </span>
+                    )}
+                    {(user.email || user.display_name || truncate(user.id)) + ` (${user.oauth_provider})`}
+                  </span>
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
         </div>
-        <div className="space-y-1">
-          <Label className="text-xs">Identity</Label>
+        <div className="space-y-1.5">
+          <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Identity</Label>
           <Select value={selectedIdentityId} onValueChange={onIdentityChange}>
             <SelectTrigger className="w-[200px]">
               <SelectValue placeholder="Select identity" />
@@ -736,8 +1075,8 @@ function AssignmentsSection({
             </SelectContent>
           </Select>
         </div>
-        <div className="space-y-1">
-          <Label className="text-xs">Duration</Label>
+        <div className="space-y-1.5">
+          <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Duration</Label>
           <Select value={selectedDuration} onValueChange={onDurationChange}>
             <SelectTrigger className="w-[140px]">
               <SelectValue placeholder="Duration" />
@@ -762,67 +1101,157 @@ function AssignmentsSection({
         {assignError && <p className="text-sm text-destructive">{assignError}</p>}
       </div>
 
+      {/* Kind presets */}
+      <div className="mb-6">
+        <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-2 block">Allowed Event Kinds</Label>
+        <div className="flex flex-wrap gap-2">
+          {KIND_PRESETS.map((preset) => {
+            const isSelected = selectedKindPresets.includes(preset.label)
+            return (
+              <button
+                key={preset.label}
+                onClick={() => togglePreset(preset.label)}
+                className={`inline-flex items-center rounded-lg border px-3 py-1 text-xs font-medium transition-all duration-200 cursor-pointer ${
+                  isSelected
+                    ? 'bg-primary text-primary-foreground border-primary shadow-[0_0_12px_-3px] shadow-primary/40'
+                    : 'bg-card text-muted-foreground border-border hover:border-primary/40 hover:text-foreground'
+                }`}
+              >
+                {preset.label}
+              </button>
+            )
+          })}
+        </div>
+        <p className="text-xs text-muted-foreground mt-1.5">
+          {selectedKindPresets.length === 0
+            ? 'No kinds selected \u2014 all event kinds will be allowed'
+            : `${selectedKindPresets.length} categor${selectedKindPresets.length === 1 ? 'y' : 'ies'} selected`}
+        </p>
+      </div>
+
       {assignments.length === 0 ? (
         <p className="text-sm text-muted-foreground">No assignments.</p>
       ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>User</TableHead>
-              <TableHead>Identity</TableHead>
-              <TableHead>Expires</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead className="w-[80px]">Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {assignments.map((assignment) => {
-              const isExpired = assignment.expires_at * 1000 < Date.now()
-              return (
-                <TableRow key={assignment.id}>
-                  <TableCell className="text-sm">
-                    {assignment.user_email || truncate(assignment.user_id)}
-                  </TableCell>
-                  <TableCell className="text-sm font-mono">
-                    {assignment.identity_label || truncate(assignment.identity_pubkey || '', 24)}
-                  </TableCell>
-                  <TableCell className="text-sm text-muted-foreground">
-                    {new Date(assignment.expires_at * 1000).toLocaleDateString()}
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant={isExpired ? 'destructive' : 'secondary'} className="text-xs">
-                      {isExpired ? 'Expired' : 'Active'}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>
-                    <AlertDialog>
-                      <AlertDialogTrigger asChild>
-                        <Button variant="destructive" size="icon" className="h-8 w-8">
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </AlertDialogTrigger>
-                      <AlertDialogContent>
-                        <AlertDialogHeader>
-                          <AlertDialogTitle>Delete assignment?</AlertDialogTitle>
-                          <AlertDialogDescription>
-                            This will revoke the user's access to this identity immediately.
-                          </AlertDialogDescription>
-                        </AlertDialogHeader>
-                        <AlertDialogFooter>
-                          <AlertDialogCancel>Cancel</AlertDialogCancel>
-                          <AlertDialogAction onClick={() => onDelete(assignment.id)}>
-                            Delete
-                          </AlertDialogAction>
-                        </AlertDialogFooter>
-                      </AlertDialogContent>
-                    </AlertDialog>
-                  </TableCell>
-                </TableRow>
-              )
-            })}
-          </TableBody>
-        </Table>
+        <div className="rounded-lg border border-border overflow-hidden">
+          <Table>
+            <TableHeader>
+              <TableRow className="bg-muted/30 hover:bg-muted/30">
+                <TableHead className="font-semibold text-xs uppercase tracking-wider">User</TableHead>
+                <TableHead className="font-semibold text-xs uppercase tracking-wider">Identity</TableHead>
+                <TableHead className="font-semibold text-xs uppercase tracking-wider">Allowed Kinds</TableHead>
+                <TableHead className="font-semibold text-xs uppercase tracking-wider">Expires</TableHead>
+                <TableHead className="font-semibold text-xs uppercase tracking-wider">Status</TableHead>
+                <TableHead className="w-[80px]"></TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {assignments.map((assignment) => (
+                <AssignmentRow
+                  key={assignment.id}
+                  assignment={assignment}
+                  user={users.find((u) => u.id === assignment.user_id)}
+                  onDelete={onDelete}
+                />
+              ))}
+            </TableBody>
+          </Table>
+        </div>
       )}
     </div>
+  )
+}
+
+function AssignmentRow({ assignment, user, onDelete }: { assignment: Assignment; user?: User; onDelete: (id: string) => void }) {
+  const identityProfile = useProfile(assignment.identity_pubkey)
+  const npub = assignment.identity_pubkey ? nip19.npubEncode(assignment.identity_pubkey) : null
+  const isExpired = assignment.expires_at * 1000 < Date.now()
+  const presetLabels = assignment.allowed_kinds
+    ? kindsToPresetLabels(assignment.allowed_kinds)
+    : null
+
+  return (
+    <TableRow className="hover:bg-accent/30 transition-colors">
+      <TableCell>
+        <div className="flex items-center gap-2">
+          <ProfileAvatar picture={user?.avatar_url ?? undefined} fallbackIcon={Users} />
+          <span className="text-sm">{user?.display_name || assignment.user_email || truncate(assignment.user_id)}</span>
+        </div>
+      </TableCell>
+      <TableCell>
+        <div className="flex items-center gap-2">
+          <ProfileAvatar picture={identityProfile?.picture} />
+          <span className="text-sm font-mono text-primary/80">
+            {npub ? truncate(npub, 24) : '\u2014'}
+          </span>
+        </div>
+      </TableCell>
+      <TableCell>
+        {presetLabels === null ? (
+          <Badge variant="outline" className="text-xs border-primary/30 text-primary">All kinds</Badge>
+        ) : presetLabels.length > 0 ? (
+          <div className="flex flex-wrap gap-1">
+            {presetLabels.map((label) => {
+              const preset = KIND_PRESETS.find((p) => p.label === label)
+              const kindNumbers = preset ? preset.kinds.join(', ') : ''
+              return (
+                <Tooltip key={label}>
+                  <TooltipTrigger asChild>
+                    <Badge variant="secondary" className="text-xs cursor-default">
+                      {label}
+                    </Badge>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    Kind{preset && preset.kinds.length > 1 ? 's' : ''}: {kindNumbers}
+                  </TooltipContent>
+                </Tooltip>
+              )
+            })}
+          </div>
+        ) : (
+          <span className="text-xs text-muted-foreground font-mono">
+            {assignment.allowed_kinds?.join(', ')}
+          </span>
+        )}
+      </TableCell>
+      <TableCell className="text-sm text-muted-foreground">
+        {new Date(assignment.expires_at * 1000).toLocaleDateString()}
+      </TableCell>
+      <TableCell>
+        {isExpired ? (
+          <span className="inline-flex items-center gap-1 rounded-full bg-destructive/10 text-destructive text-xs font-medium px-2 py-0.5">
+            <span className="h-1.5 w-1.5 rounded-full bg-destructive" />
+            Expired
+          </span>
+        ) : (
+          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-xs font-medium px-2 py-0.5">
+            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+            Active
+          </span>
+        )}
+      </TableCell>
+      <TableCell>
+        <AlertDialog>
+          <AlertDialogTrigger asChild>
+            <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10">
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          </AlertDialogTrigger>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete assignment?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This will revoke the user's access to this identity immediately.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction onClick={() => onDelete(assignment.id)}>
+                Delete
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      </TableCell>
+    </TableRow>
   )
 }

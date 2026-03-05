@@ -18,18 +18,15 @@ type ConfiguredClient =
 pub struct OAuthUser {
     pub provider: String,
     pub sub: String,
-    #[allow(dead_code)]
     pub email: Option<String>,
-    #[allow(dead_code)]
     pub name: Option<String>,
-    #[allow(dead_code)]
     pub avatar_url: Option<String>,
 }
 
 pub struct OAuthManager {
-    google_client: ConfiguredClient,
-    github_client: ConfiguredClient,
-    microsoft_client: ConfiguredClient,
+    google_client: Option<ConfiguredClient>,
+    github_client: Option<ConfiguredClient>,
+    microsoft_client: Option<ConfiguredClient>,
     apple_client_id: String,
     apple_client_secret: String,
     apple_redirect_uri: String,
@@ -48,6 +45,7 @@ struct GoogleUserInfo {
 struct GitHubUserInfo {
     id: u64,
     login: String,
+    #[allow(dead_code)]
     name: Option<String>,
     avatar_url: Option<String>,
 }
@@ -75,39 +73,51 @@ struct MicrosoftUserInfo {
 }
 
 impl OAuthManager {
+    fn is_configured(id: &str, secret: &str) -> bool {
+        !id.is_empty() && !secret.is_empty()
+    }
+
     pub fn new(config: &Config) -> Result<Self, String> {
-        let google_client = BasicClient::new(ClientId::new(config.google_client_id.clone()))
-            .set_client_secret(ClientSecret::new(config.google_client_secret.clone()))
-            .set_auth_uri(
-                AuthUrl::new("https://accounts.google.com/o/oauth2/v2/auth".to_string())
-                    .map_err(|e| format!("Invalid Google auth URL: {e}"))?,
-            )
-            .set_token_uri(
-                TokenUrl::new("https://oauth2.googleapis.com/token".to_string())
-                    .map_err(|e| format!("Invalid Google token URL: {e}"))?,
-            )
-            .set_redirect_uri(
-                RedirectUrl::new(format!("{}/auth/google/callback", config.public_url))
-                    .map_err(|e| format!("Invalid Google redirect URL: {e}"))?,
-            );
+        let google_client = if Self::is_configured(&config.google_client_id, &config.google_client_secret) {
+            Some(BasicClient::new(ClientId::new(config.google_client_id.clone()))
+                .set_client_secret(ClientSecret::new(config.google_client_secret.clone()))
+                .set_auth_uri(
+                    AuthUrl::new("https://accounts.google.com/o/oauth2/v2/auth".to_string())
+                        .map_err(|e| format!("Invalid Google auth URL: {e}"))?,
+                )
+                .set_token_uri(
+                    TokenUrl::new("https://oauth2.googleapis.com/token".to_string())
+                        .map_err(|e| format!("Invalid Google token URL: {e}"))?,
+                )
+                .set_redirect_uri(
+                    RedirectUrl::new(format!("{}/auth/google/callback", config.public_url))
+                        .map_err(|e| format!("Invalid Google redirect URL: {e}"))?,
+                ))
+        } else {
+            None
+        };
 
-        let github_client = BasicClient::new(ClientId::new(config.github_client_id.clone()))
-            .set_client_secret(ClientSecret::new(config.github_client_secret.clone()))
-            .set_auth_uri(
-                AuthUrl::new("https://github.com/login/oauth/authorize".to_string())
-                    .map_err(|e| format!("Invalid GitHub auth URL: {e}"))?,
-            )
-            .set_token_uri(
-                TokenUrl::new("https://github.com/login/oauth/access_token".to_string())
-                    .map_err(|e| format!("Invalid GitHub token URL: {e}"))?,
-            )
-            .set_redirect_uri(
-                RedirectUrl::new(format!("{}/auth/github/callback", config.public_url))
-                    .map_err(|e| format!("Invalid GitHub redirect URL: {e}"))?,
-            );
+        let github_client = if Self::is_configured(&config.github_client_id, &config.github_client_secret) {
+            Some(BasicClient::new(ClientId::new(config.github_client_id.clone()))
+                .set_client_secret(ClientSecret::new(config.github_client_secret.clone()))
+                .set_auth_uri(
+                    AuthUrl::new("https://github.com/login/oauth/authorize".to_string())
+                        .map_err(|e| format!("Invalid GitHub auth URL: {e}"))?,
+                )
+                .set_token_uri(
+                    TokenUrl::new("https://github.com/login/oauth/access_token".to_string())
+                        .map_err(|e| format!("Invalid GitHub token URL: {e}"))?,
+                )
+                .set_redirect_uri(
+                    RedirectUrl::new(format!("{}/auth/github/callback", config.public_url))
+                        .map_err(|e| format!("Invalid GitHub redirect URL: {e}"))?,
+                ))
+        } else {
+            None
+        };
 
-        let microsoft_client =
-            BasicClient::new(ClientId::new(config.microsoft_client_id.clone()))
+        let microsoft_client = if Self::is_configured(&config.microsoft_client_id, &config.microsoft_client_secret) {
+            Some(BasicClient::new(ClientId::new(config.microsoft_client_id.clone()))
                 .set_client_secret(ClientSecret::new(
                     config.microsoft_client_secret.clone(),
                 ))
@@ -127,7 +137,10 @@ impl OAuthManager {
                 .set_redirect_uri(
                     RedirectUrl::new(format!("{}/auth/microsoft/callback", config.public_url))
                         .map_err(|e| format!("Invalid Microsoft redirect URL: {e}"))?,
-                );
+                ))
+        } else {
+            None
+        };
 
         let http_client = reqwest::Client::builder()
             .redirect(redirect::Policy::none())
@@ -145,42 +158,54 @@ impl OAuthManager {
         })
     }
 
-    pub fn google_auth_url(&self, state: &str) -> String {
+    pub fn enabled_providers(&self) -> Vec<&str> {
+        let mut providers = Vec::new();
+        if self.google_client.is_some() { providers.push("google"); }
+        if self.github_client.is_some() { providers.push("github"); }
+        if self.microsoft_client.is_some() { providers.push("microsoft"); }
+        if Self::is_configured(&self.apple_client_id, &self.apple_client_secret) { providers.push("apple"); }
+        providers
+    }
+
+    pub fn google_auth_url(&self, state: &str) -> Option<String> {
+        let client = self.google_client.as_ref()?;
         let state = state.to_string();
-        let (url, _csrf) = self
-            .google_client
+        let (url, _csrf) = client
             .authorize_url(|| CsrfToken::new(state))
             .add_scope(Scope::new("openid".to_string()))
             .add_scope(Scope::new("email".to_string()))
             .add_scope(Scope::new("profile".to_string()))
             .url();
-        url.to_string()
+        Some(url.to_string())
     }
 
-    pub fn github_auth_url(&self, state: &str) -> String {
+    pub fn github_auth_url(&self, state: &str) -> Option<String> {
+        let client = self.github_client.as_ref()?;
         let state = state.to_string();
-        let (url, _csrf) = self
-            .github_client
+        let (url, _csrf) = client
             .authorize_url(|| CsrfToken::new(state))
             .add_scope(Scope::new("read:user".to_string()))
             .url();
-        url.to_string()
+        Some(url.to_string())
     }
 
-    pub fn microsoft_auth_url(&self, state: &str) -> String {
+    pub fn microsoft_auth_url(&self, state: &str) -> Option<String> {
+        let client = self.microsoft_client.as_ref()?;
         let state = state.to_string();
-        let (url, _csrf) = self
-            .microsoft_client
+        let (url, _csrf) = client
             .authorize_url(|| CsrfToken::new(state))
             .add_scope(Scope::new("openid".to_string()))
             .add_scope(Scope::new("email".to_string()))
             .add_scope(Scope::new("profile".to_string()))
             .add_scope(Scope::new("User.Read".to_string()))
             .url();
-        url.to_string()
+        Some(url.to_string())
     }
 
-    pub fn apple_auth_url(&self, state: &str) -> String {
+    pub fn apple_auth_url(&self, state: &str) -> Option<String> {
+        if !Self::is_configured(&self.apple_client_id, &self.apple_client_secret) {
+            return None;
+        }
         let mut url = url::Url::parse("https://appleid.apple.com/auth/authorize").unwrap();
         url.query_pairs_mut()
             .append_pair("client_id", &self.apple_client_id)
@@ -189,12 +214,12 @@ impl OAuthManager {
             .append_pair("scope", "name email")
             .append_pair("response_mode", "form_post")
             .append_pair("state", state);
-        url.to_string()
+        Some(url.to_string())
     }
 
     pub async fn exchange_google_code(&self, code: &str) -> Result<OAuthUser, String> {
-        let token_result = self
-            .google_client
+        let client = self.google_client.as_ref().ok_or("Google OAuth not configured")?;
+        let token_result = client
             .exchange_code(oauth2::AuthorizationCode::new(code.to_string()))
             .request_async(&self.http_client)
             .await
@@ -223,8 +248,8 @@ impl OAuthManager {
     }
 
     pub async fn exchange_github_code(&self, code: &str) -> Result<OAuthUser, String> {
-        let token_result = self
-            .github_client
+        let client = self.github_client.as_ref().ok_or("GitHub OAuth not configured")?;
+        let token_result = client
             .exchange_code(oauth2::AuthorizationCode::new(code.to_string()))
             .request_async(&self.http_client)
             .await
@@ -248,7 +273,7 @@ impl OAuthManager {
             provider: "github".to_string(),
             sub: user_info.id.to_string(),
             email: None,
-            name: user_info.name.or(Some(user_info.login)),
+            name: Some(user_info.login),
             avatar_url: user_info.avatar_url,
         })
     }
@@ -287,8 +312,8 @@ impl OAuthManager {
     }
 
     pub async fn exchange_microsoft_code(&self, code: &str) -> Result<OAuthUser, String> {
-        let token_result = self
-            .microsoft_client
+        let client = self.microsoft_client.as_ref().ok_or("Microsoft OAuth not configured")?;
+        let token_result = client
             .exchange_code(oauth2::AuthorizationCode::new(code.to_string()))
             .request_async(&self.http_client)
             .await

@@ -158,7 +158,7 @@ impl Bunker {
         );
         let content = self.decrypt_content(event).await?;
 
-        tracing::info!(content = %content, "Decrypted NIP-46 content");
+        tracing::debug!("Decrypted NIP-46 content successfully");
 
         let parsed: Value =
             serde_json::from_str(&content).map_err(|e| format!("Invalid JSON: {e}"))?;
@@ -286,6 +286,19 @@ impl Bunker {
                 obj.insert("pubkey".to_string(), serde_json::Value::String(identity.pubkey.clone()));
             }
         }
+
+        // Check allowed_kinds for this client's assignment
+        let client_pk_hex = client_pubkey.to_hex();
+        if let Some(allowed_kinds) = self.db.get_allowed_kinds_for_client(&client_pk_hex)
+            .map_err(|e| format!("DB error: {e}"))? {
+            let event_kind = event_value.get("kind")
+                .and_then(|v| v.as_u64())
+                .ok_or("Missing or invalid 'kind' in event JSON")?;
+            if !allowed_kinds.contains(&event_kind) {
+                return Ok(nip46_error(id, &format!("Event kind {} is not allowed for this assignment", event_kind)));
+            }
+        }
+
         let patched_json = serde_json::to_string(&event_value)
             .map_err(|e| format!("Failed to serialize patched event: {e}"))?;
 

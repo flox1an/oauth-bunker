@@ -53,22 +53,14 @@ impl Config {
             public_url: env::var("PUBLIC_URL")
                 .unwrap_or_else(|_| "http://localhost:3000".into()),
             master_key,
-            google_client_id: env::var("GOOGLE_CLIENT_ID")
-                .map_err(|_| "GOOGLE_CLIENT_ID must be set")?,
-            google_client_secret: env::var("GOOGLE_CLIENT_SECRET")
-                .map_err(|_| "GOOGLE_CLIENT_SECRET must be set")?,
-            github_client_id: env::var("GITHUB_CLIENT_ID")
-                .map_err(|_| "GITHUB_CLIENT_ID must be set")?,
-            github_client_secret: env::var("GITHUB_CLIENT_SECRET")
-                .map_err(|_| "GITHUB_CLIENT_SECRET must be set")?,
-            microsoft_client_id: env::var("MICROSOFT_CLIENT_ID")
-                .map_err(|_| "MICROSOFT_CLIENT_ID must be set")?,
-            microsoft_client_secret: env::var("MICROSOFT_CLIENT_SECRET")
-                .map_err(|_| "MICROSOFT_CLIENT_SECRET must be set")?,
-            apple_client_id: env::var("APPLE_CLIENT_ID")
-                .map_err(|_| "APPLE_CLIENT_ID must be set")?,
-            apple_client_secret: env::var("APPLE_CLIENT_SECRET")
-                .map_err(|_| "APPLE_CLIENT_SECRET must be set")?,
+            google_client_id: env::var("GOOGLE_CLIENT_ID").unwrap_or_default(),
+            google_client_secret: env::var("GOOGLE_CLIENT_SECRET").unwrap_or_default(),
+            github_client_id: env::var("GITHUB_CLIENT_ID").unwrap_or_default(),
+            github_client_secret: env::var("GITHUB_CLIENT_SECRET").unwrap_or_default(),
+            microsoft_client_id: env::var("MICROSOFT_CLIENT_ID").unwrap_or_default(),
+            microsoft_client_secret: env::var("MICROSOFT_CLIENT_SECRET").unwrap_or_default(),
+            apple_client_id: env::var("APPLE_CLIENT_ID").unwrap_or_default(),
+            apple_client_secret: env::var("APPLE_CLIENT_SECRET").unwrap_or_default(),
             nostr_relays: relays,
             database_url: env::var("DATABASE_URL")
                 .unwrap_or_else(|_| "oauth-signer.db".into()),

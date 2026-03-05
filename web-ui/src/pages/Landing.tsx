@@ -3,13 +3,6 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Copy, Check } from 'lucide-react'
 
-const providers = [
-  { name: 'Google', path: '/auth/google' },
-  { name: 'GitHub', path: '/auth/github' },
-  { name: 'Microsoft', path: '/auth/microsoft' },
-  { name: 'Apple', path: '/auth/apple' },
-]
-
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false)
 
@@ -43,7 +36,7 @@ export default function Landing() {
         <div className="text-center space-y-2">
           <h1 className="text-3xl font-bold tracking-tight">Nostr OAuth Signer</h1>
           <p className="text-muted-foreground">
-            Sign in with your existing account to connect with a Nostr identity.
+            Use your existing accounts to connect with a Nostr identity.
           </p>
         </div>
 
@@ -78,27 +71,8 @@ export default function Landing() {
           </Card>
         )}
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Sign In</CardTitle>
-            <CardDescription>Choose a provider to manage your keys</CardDescription>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-3">
-            {providers.map((provider) => (
-              <Button
-                key={provider.name}
-                variant="outline"
-                className="w-full justify-center"
-                asChild
-              >
-                <a href={provider.path}>Sign in with {provider.name}</a>
-              </Button>
-            ))}
-          </CardContent>
-        </Card>
-
         <p className="text-center text-sm text-muted-foreground">
-          Choose from available Nostr identities after signing in.
+          Connect from any NIP-46 compatible Nostr client using the domain or bunker URL above.
         </p>
       </div>
     </div>

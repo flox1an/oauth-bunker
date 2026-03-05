@@ -95,11 +95,28 @@ async fn main() {
         }
     });
 
-    // Build router with embedded static assets
+    // Build router with embedded static assets + cache headers
     let serve_assets = static_files::serve_assets();
     let app = web::router()
         .with_state(state)
-        .fallback_service(serve_assets);
+        .fallback_service(serve_assets)
+        .layer(axum::middleware::map_response(
+            |uri: axum::http::Uri, mut response: axum::response::Response| async move {
+                let path = uri.path();
+                let cache_value = if path.starts_with("/assets/") {
+                    // Hashed assets (e.g. index-BrA8W7_9.js) — cache forever
+                    "public, max-age=31536000, immutable"
+                } else {
+                    // HTML and everything else — always revalidate
+                    "no-cache"
+                };
+                response.headers_mut().insert(
+                    axum::http::header::CACHE_CONTROL,
+                    cache_value.parse().unwrap(),
+                );
+                response
+            },
+        ));
 
     // Start server
     let bind_addr = format!("{}:{}", config.host, config.port);

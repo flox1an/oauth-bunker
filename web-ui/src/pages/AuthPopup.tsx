@@ -5,12 +5,12 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { SimplePool } from 'nostr-tools'
 import { Loader2 } from 'lucide-react'
 
-const providers = [
-  { name: 'Google', path: '/auth/google' },
-  { name: 'GitHub', path: '/auth/github' },
-  { name: 'Microsoft', path: '/auth/microsoft' },
-  { name: 'Apple', path: '/auth/apple' },
-]
+const PROVIDER_META: Record<string, { name: string; path: string }> = {
+  google: { name: 'Google', path: '/auth/google' },
+  github: { name: 'GitHub', path: '/auth/github' },
+  microsoft: { name: 'Microsoft', path: '/auth/microsoft' },
+  apple: { name: 'Apple', path: '/auth/apple' },
+}
 
 const PROFILE_RELAYS = [
   'wss://relay.damus.io',
@@ -42,11 +42,27 @@ export default function AuthPopup() {
   const [searchParams] = useSearchParams()
   const authenticated = searchParams.get('authenticated') === 'true'
 
+  const [providers, setProviders] = useState<{ name: string; path: string }[]>([])
+  const [providersLoading, setProvidersLoading] = useState(true)
   const [identities, setIdentities] = useState<Identity[]>([])
   const [profiles, setProfiles] = useState<Record<string, NostrProfile>>({})
   const [loading, setLoading] = useState(true)
   const [selecting, setSelecting] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (authenticated) return
+    fetch('/api/providers')
+      .then((res) => res.json())
+      .then((data) => {
+        const enabled = (data.providers as string[])
+          .map((id) => PROVIDER_META[id])
+          .filter(Boolean)
+        setProviders(enabled)
+      })
+      .catch(() => {})
+      .finally(() => setProvidersLoading(false))
+  }, [authenticated])
 
   useEffect(() => {
     if (!authenticated) return
@@ -114,6 +130,14 @@ export default function AuthPopup() {
 
   // Phase 1: Not authenticated — show OAuth buttons
   if (!authenticated) {
+    if (providersLoading) {
+      return (
+        <div className="flex min-h-screen items-center justify-center">
+          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        </div>
+      )
+    }
+
     return (
       <div className="flex min-h-screen items-center justify-center px-4">
         <div className="w-full max-w-[400px] space-y-6">
@@ -135,6 +159,11 @@ export default function AuthPopup() {
                   </a>
                 </Button>
               ))}
+              {providers.length === 0 && (
+                <p className="text-center text-sm text-muted-foreground py-4">
+                  No sign-in providers configured.
+                </p>
+              )}
             </CardContent>
           </Card>
 
@@ -218,9 +247,12 @@ export default function AuthPopup() {
               )
             })}
             {identities.length === 0 && (
-              <p className="text-center text-sm text-muted-foreground py-4">
-                No identities available. Ask the administrator to add one.
-              </p>
+              <div className="text-center py-4 space-y-2">
+                <p className="text-sm font-medium text-destructive">No identities assigned</p>
+                <p className="text-xs text-muted-foreground">
+                  Your account does not have any Nostr identities assigned. Contact the administrator to get access.
+                </p>
+              </div>
             )}
           </CardContent>
         </Card>

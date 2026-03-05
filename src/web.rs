@@ -47,6 +47,7 @@ pub struct CreateAssignmentBody {
     pub user_id: String,
     pub identity_id: String,
     pub duration: String, // "1d", "1w", "1m", "6m", "1y"
+    pub allowed_kinds: Option<Vec<u64>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -97,6 +98,7 @@ struct IdentityResponse {
 struct UserResponse {
     id: String,
     email: Option<String>,
+    display_name: Option<String>,
     avatar_url: Option<String>,
     oauth_provider: String,
     created_at: i64,
@@ -123,6 +125,7 @@ struct AssignmentResponse {
     user_email: Option<String>,
     identity_pubkey: Option<String>,
     identity_label: Option<String>,
+    allowed_kinds: Option<Vec<u64>>,
     expires_at: i64,
     created_at: i64,
 }
@@ -156,6 +159,7 @@ pub fn router() -> Router<AppState> {
         .route("/auth/microsoft/callback", get(auth_microsoft_callback))
         .route("/auth/apple/callback", post(auth_apple_callback))
         .route("/auth/{request_id}", get(auth_popup))
+        .route("/api/providers", get(api_providers))
         .route("/api/bunker-url", get(api_bunker_url))
         .route("/api/me", get(api_me))
         .route("/api/connections", get(api_connections))
@@ -164,6 +168,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/admin/identities", get(api_list_all_identities).post(api_add_identity))
         .route("/api/admin/identities/{id}", delete(api_delete_identity))
         .route("/api/admin/users", get(api_list_users))
+        .route("/api/admin/users/{id}", delete(api_delete_user))
         .route("/api/admin/assignments", get(api_list_assignments).post(api_create_assignment))
         .route("/api/admin/assignments/{id}", delete(api_delete_assignment))
         .route("/api/admin/connections", get(api_admin_list_connections))
@@ -356,37 +361,45 @@ async fn health() -> impl IntoResponse {
 async fn auth_google(
     State(state): State<AppState>,
     Query(params): Query<AuthQuery>,
-) -> impl IntoResponse {
+) -> Response {
     let request_id = params.request_id.unwrap_or_default();
-    let url = state.oauth.google_auth_url(&request_id);
-    Redirect::temporary(&url)
+    match state.oauth.google_auth_url(&request_id) {
+        Some(url) => Redirect::temporary(&url).into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
 }
 
 async fn auth_github(
     State(state): State<AppState>,
     Query(params): Query<AuthQuery>,
-) -> impl IntoResponse {
+) -> Response {
     let request_id = params.request_id.unwrap_or_default();
-    let url = state.oauth.github_auth_url(&request_id);
-    Redirect::temporary(&url)
+    match state.oauth.github_auth_url(&request_id) {
+        Some(url) => Redirect::temporary(&url).into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
 }
 
 async fn auth_microsoft(
     State(state): State<AppState>,
     Query(params): Query<AuthQuery>,
-) -> impl IntoResponse {
+) -> Response {
     let request_id = params.request_id.unwrap_or_default();
-    let url = state.oauth.microsoft_auth_url(&request_id);
-    Redirect::temporary(&url)
+    match state.oauth.microsoft_auth_url(&request_id) {
+        Some(url) => Redirect::temporary(&url).into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
 }
 
 async fn auth_apple(
     State(state): State<AppState>,
     Query(params): Query<AuthQuery>,
-) -> impl IntoResponse {
+) -> Response {
     let request_id = params.request_id.unwrap_or_default();
-    let url = state.oauth.apple_auth_url(&request_id);
-    Redirect::temporary(&url)
+    match state.oauth.apple_auth_url(&request_id) {
+        Some(url) => Redirect::temporary(&url).into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -478,6 +491,13 @@ async fn handle_oauth_complete(
                     user.email = Some(email.clone());
                 }
             }
+            // Backfill display_name if missing
+            if user.display_name.is_none() {
+                if let Some(ref name) = oauth_user.name {
+                    let _ = state.db.update_user_display_name(&user.id, name);
+                    user.display_name = Some(name.clone());
+                }
+            }
             // Always update avatar_url from OAuth (may change over time)
             if let Some(ref avatar_url) = oauth_user.avatar_url {
                 let _ = state.db.update_user_avatar(&user.id, avatar_url);
@@ -493,6 +513,7 @@ async fn handle_oauth_complete(
                 oauth_provider: oauth_user.provider.clone(),
                 oauth_sub: oauth_user.sub.clone(),
                 email: oauth_user.email.clone(),
+                display_name: oauth_user.name.clone(),
                 avatar_url: oauth_user.avatar_url.clone(),
                 created_at: now,
             };
@@ -557,6 +578,10 @@ async fn auth_popup(Path(request_id): Path<String>) -> impl IntoResponse {
 // ---------------------------------------------------------------------------
 // API: /api/bunker-url (public, no auth required)
 // ---------------------------------------------------------------------------
+
+async fn api_providers(State(state): State<AppState>) -> impl IntoResponse {
+    Json(serde_json::json!({ "providers": state.oauth.enabled_providers() }))
+}
 
 async fn api_bunker_url(State(state): State<AppState>) -> impl IntoResponse {
     let bunker_pk = state.bunker_pubkey.read().await;
@@ -668,17 +693,10 @@ async fn api_list_identities(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, Response> {
-    // If user is authenticated, return only assigned identities
-    let identities = if let Ok(user) = get_authenticated_user(&state, &headers) {
-        state.db.list_identities_for_user(&user.id).map_err(|e| {
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("Database error: {e}")}))).into_response()
-        })?
-    } else {
-        // Unauthenticated: return all (for admin page)
-        state.db.list_identities().map_err(|e| {
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("Database error: {e}")}))).into_response()
-        })?
-    };
+    let user = get_authenticated_user(&state, &headers)?;
+    let identities = state.db.list_identities_for_user(&user.id).map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("Database error: {e}")}))).into_response()
+    })?;
 
     let response: Vec<IdentityResponse> = identities
         .into_iter()
@@ -933,7 +951,8 @@ async fn api_list_users(
         .into_iter()
         .map(|u| UserResponse {
             id: u.id,
-            email: u.email,
+            email: u.email.as_deref().map(obfuscate_email),
+            display_name: u.display_name,
             avatar_url: u.avatar_url,
             oauth_provider: u.oauth_provider,
             created_at: u.created_at,
@@ -941,6 +960,29 @@ async fn api_list_users(
         .collect();
 
     Ok(Json(response))
+}
+
+// ---------------------------------------------------------------------------
+// API: DELETE /api/admin/users/{id}
+// ---------------------------------------------------------------------------
+
+async fn api_delete_user(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<impl IntoResponse, Response> {
+    let url = format!("{}/api/admin/users/{}", state.config.public_url, id);
+    verify_admin_auth(&state, &headers, "DELETE", &url)?;
+
+    let deleted = state.db.delete_user_cascade(&id).map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("Database error: {e}")}))).into_response()
+    })?;
+
+    if deleted {
+        Ok(Json(serde_json::json!({"deleted": true})))
+    } else {
+        Err((StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "User not found"}))).into_response())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -960,15 +1002,23 @@ async fn api_list_assignments(
 
     let response: Vec<AssignmentResponse> = assignments
         .into_iter()
-        .map(|(a, user_email, identity_pubkey, identity_label)| AssignmentResponse {
-            id: a.id,
-            user_id: a.user_id,
-            identity_id: a.identity_id,
-            user_email,
-            identity_pubkey,
-            identity_label,
-            expires_at: a.expires_at,
-            created_at: a.created_at,
+        .map(|(a, user_email, identity_pubkey, identity_label)| {
+            let allowed_kinds = a.allowed_kinds.as_ref().map(|s| {
+                s.split(',')
+                    .filter_map(|k| k.trim().parse::<u64>().ok())
+                    .collect::<Vec<u64>>()
+            });
+            AssignmentResponse {
+                id: a.id,
+                user_id: a.user_id,
+                identity_id: a.identity_id,
+                user_email: user_email.as_deref().map(obfuscate_email),
+                identity_pubkey,
+                identity_label,
+                allowed_kinds,
+                expires_at: a.expires_at,
+                created_at: a.created_at,
+            }
         })
         .collect();
 
@@ -1007,10 +1057,14 @@ async fn api_create_assignment(
     })?;
 
     let now = Utc::now().timestamp();
+    let allowed_kinds_str = body.allowed_kinds.as_ref().map(|kinds| {
+        kinds.iter().map(|k| k.to_string()).collect::<Vec<_>>().join(",")
+    });
     let assignment = Assignment {
         id: Uuid::new_v4().to_string(),
         user_id: body.user_id,
         identity_id: body.identity_id,
+        allowed_kinds: allowed_kinds_str,
         expires_at: now + duration_secs,
         created_at: now,
     };

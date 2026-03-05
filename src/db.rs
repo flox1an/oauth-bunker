@@ -12,6 +12,7 @@ pub struct User {
     pub oauth_provider: String,
     pub oauth_sub: String,
     pub email: Option<String>,
+    pub display_name: Option<String>,
     pub avatar_url: Option<String>,
     pub created_at: i64,
 }
@@ -59,6 +60,7 @@ pub struct Assignment {
     pub id: String,
     pub user_id: String,
     pub identity_id: String,
+    pub allowed_kinds: Option<String>,
     pub expires_at: i64,
     pub created_at: i64,
 }
@@ -207,6 +209,24 @@ impl Database {
             CREATE INDEX IF NOT EXISTS idx_assignments_expires_at ON user_identity_assignments(expires_at);"
         )?;
 
+        // Add display_name column to users table if it doesn't exist
+        let has_display_name: bool = conn
+            .prepare("SELECT COUNT(*) FROM pragma_table_info('users') WHERE name = 'display_name'")?
+            .query_row([], |row| row.get::<_, i64>(0))
+            .map(|count| count > 0)?;
+        if !has_display_name {
+            conn.execute_batch("ALTER TABLE users ADD COLUMN display_name TEXT;")?;
+        }
+
+        // Add allowed_kinds column to user_identity_assignments if it doesn't exist
+        let has_allowed_kinds: bool = conn
+            .prepare("SELECT COUNT(*) FROM pragma_table_info('user_identity_assignments') WHERE name = 'allowed_kinds'")?
+            .query_row([], |row| row.get::<_, i64>(0))
+            .map(|count| count > 0)?;
+        if !has_allowed_kinds {
+            conn.execute_batch("ALTER TABLE user_identity_assignments ADD COLUMN allowed_kinds TEXT;")?;
+        }
+
         Ok(())
     }
 
@@ -217,13 +237,14 @@ impl Database {
     pub fn create_user(&self, user: &User) -> rusqlite::Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO users (id, oauth_provider, oauth_sub, encrypted_nsec, nonce, pubkey, email, avatar_url, created_at)
-             VALUES (?1, ?2, ?3, X'00', X'00', '', ?4, ?5, ?6)",
+            "INSERT INTO users (id, oauth_provider, oauth_sub, encrypted_nsec, nonce, pubkey, email, display_name, avatar_url, created_at)
+             VALUES (?1, ?2, ?3, X'00', X'00', '', ?4, ?5, ?6, ?7)",
             params![
                 user.id,
                 user.oauth_provider,
                 user.oauth_sub,
                 user.email,
+                user.display_name,
                 user.avatar_url,
                 user.created_at,
             ],
@@ -238,7 +259,7 @@ impl Database {
     ) -> rusqlite::Result<Option<User>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, oauth_provider, oauth_sub, email, avatar_url, created_at
+            "SELECT id, oauth_provider, oauth_sub, email, display_name, avatar_url, created_at
              FROM users WHERE oauth_provider = ?1 AND oauth_sub = ?2",
         )?;
         let mut rows = stmt.query_map(params![provider, sub], |row| {
@@ -247,8 +268,9 @@ impl Database {
                 oauth_provider: row.get(1)?,
                 oauth_sub: row.get(2)?,
                 email: row.get(3)?,
-                avatar_url: row.get(4)?,
-                created_at: row.get(5)?,
+                display_name: row.get(4)?,
+                avatar_url: row.get(5)?,
+                created_at: row.get(6)?,
             })
         })?;
         match rows.next() {
@@ -266,6 +288,15 @@ impl Database {
         Ok(())
     }
 
+    pub fn update_user_display_name(&self, user_id: &str, display_name: &str) -> rusqlite::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE users SET display_name = ?1 WHERE id = ?2",
+            params![display_name, user_id],
+        )?;
+        Ok(())
+    }
+
     pub fn update_user_avatar(&self, user_id: &str, avatar_url: &str) -> rusqlite::Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
@@ -278,7 +309,7 @@ impl Database {
     pub fn find_user_by_id(&self, id: &str) -> rusqlite::Result<Option<User>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, oauth_provider, oauth_sub, email, avatar_url, created_at
+            "SELECT id, oauth_provider, oauth_sub, email, display_name, avatar_url, created_at
              FROM users WHERE id = ?1",
         )?;
         let mut rows = stmt.query_map(params![id], |row| {
@@ -287,14 +318,25 @@ impl Database {
                 oauth_provider: row.get(1)?,
                 oauth_sub: row.get(2)?,
                 email: row.get(3)?,
-                avatar_url: row.get(4)?,
-                created_at: row.get(5)?,
+                display_name: row.get(4)?,
+                avatar_url: row.get(5)?,
+                created_at: row.get(6)?,
             })
         })?;
         match rows.next() {
             Some(row) => Ok(Some(row?)),
             None => Ok(None),
         }
+    }
+
+    /// Delete a user and all related data (connections, assignments, sessions).
+    pub fn delete_user_cascade(&self, user_id: &str) -> rusqlite::Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM connections WHERE user_id = ?1", params![user_id])?;
+        conn.execute("DELETE FROM user_identity_assignments WHERE user_id = ?1", params![user_id])?;
+        conn.execute("DELETE FROM sessions WHERE user_id = ?1", params![user_id])?;
+        let affected = conn.execute("DELETE FROM users WHERE id = ?1", params![user_id])?;
+        Ok(affected > 0)
     }
 
     // -----------------------------------------------------------------------
@@ -689,7 +731,7 @@ impl Database {
     pub fn list_all_users(&self) -> rusqlite::Result<Vec<User>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, oauth_provider, oauth_sub, email, avatar_url, created_at
+            "SELECT id, oauth_provider, oauth_sub, email, display_name, avatar_url, created_at
              FROM users ORDER BY created_at DESC",
         )?;
         let rows = stmt.query_map([], |row| {
@@ -698,8 +740,9 @@ impl Database {
                 oauth_provider: row.get(1)?,
                 oauth_sub: row.get(2)?,
                 email: row.get(3)?,
-                avatar_url: row.get(4)?,
-                created_at: row.get(5)?,
+                display_name: row.get(4)?,
+                avatar_url: row.get(5)?,
+                created_at: row.get(6)?,
             })
         })?;
         rows.collect()
@@ -708,12 +751,13 @@ impl Database {
     pub fn create_assignment(&self, assignment: &Assignment) -> rusqlite::Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO user_identity_assignments (id, user_id, identity_id, expires_at, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO user_identity_assignments (id, user_id, identity_id, allowed_kinds, expires_at, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
                 assignment.id,
                 assignment.user_id,
                 assignment.identity_id,
+                assignment.allowed_kinds,
                 assignment.expires_at,
                 assignment.created_at,
             ],
@@ -724,7 +768,7 @@ impl Database {
     pub fn list_assignments(&self) -> rusqlite::Result<Vec<(Assignment, Option<String>, Option<String>, Option<String>)>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT a.id, a.user_id, a.identity_id, a.expires_at, a.created_at,
+            "SELECT a.id, a.user_id, a.identity_id, a.allowed_kinds, a.expires_at, a.created_at,
                     u.email, i.pubkey, i.label
              FROM user_identity_assignments a
              JOIN users u ON a.user_id = u.id
@@ -737,12 +781,13 @@ impl Database {
                     id: row.get(0)?,
                     user_id: row.get(1)?,
                     identity_id: row.get(2)?,
-                    expires_at: row.get(3)?,
-                    created_at: row.get(4)?,
+                    allowed_kinds: row.get(3)?,
+                    expires_at: row.get(4)?,
+                    created_at: row.get(5)?,
                 },
-                row.get::<_, Option<String>>(5)?, // user email
-                row.get::<_, Option<String>>(6)?, // identity pubkey
-                row.get::<_, Option<String>>(7)?, // identity label
+                row.get::<_, Option<String>>(6)?, // user email
+                row.get::<_, Option<String>>(7)?, // identity pubkey
+                row.get::<_, Option<String>>(8)?, // identity label
             ))
         })?;
         rows.collect()
@@ -814,6 +859,30 @@ impl Database {
         )?;
 
         Ok(connections_deleted)
+    }
+
+    /// Get allowed_kinds for a client pubkey by joining connections → assignments.
+    /// Returns None if no assignment found or allowed_kinds is NULL (allow all).
+    pub fn get_allowed_kinds_for_client(&self, client_pubkey: &str) -> rusqlite::Result<Option<Vec<u64>>> {
+        let now = Utc::now().timestamp();
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT a.allowed_kinds
+             FROM user_identity_assignments a
+             JOIN connections c ON c.user_id = a.user_id AND c.identity_id = a.identity_id
+             WHERE c.client_pubkey = ?1 AND a.expires_at > ?2
+             LIMIT 1",
+        )?;
+        let result: Option<Option<String>> = stmt
+            .query_row(params![client_pubkey, now], |row| row.get(0))
+            .ok();
+
+        Ok(result.flatten().map(|kinds_str| {
+            kinds_str
+                .split(',')
+                .filter_map(|s| s.trim().parse::<u64>().ok())
+                .collect()
+        }))
     }
 
     /// Delete connections for a specific user+identity pair (used when manually deleting an assignment).
