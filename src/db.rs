@@ -647,6 +647,8 @@ impl Database {
 
     pub fn delete_identity(&self, id: &str) -> rusqlite::Result<bool> {
         let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM connections WHERE identity_id = ?1", params![id])?;
+        conn.execute("DELETE FROM user_identity_assignments WHERE identity_id = ?1", params![id])?;
         let affected = conn.execute(
             "DELETE FROM identities WHERE id = ?1",
             params![id],

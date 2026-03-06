@@ -43,11 +43,27 @@ pub struct SelectIdentityBody {
 }
 
 #[derive(Deserialize)]
+pub struct RejectAuthBody {
+    pub request_id: String,
+}
+
+#[derive(Deserialize)]
+pub struct CreateIdentityBody {
+    pub label: Option<String>,
+}
+
+#[derive(Deserialize)]
 pub struct CreateAssignmentBody {
     pub user_id: String,
     pub identity_id: String,
     pub duration: String, // "1d", "1w", "1m", "6m", "1y"
     pub allowed_kinds: Option<Vec<u64>>,
+}
+
+#[derive(Deserialize)]
+pub struct NostrAuthBody {
+    pub signed_event: String,
+    pub request_id: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -64,7 +80,10 @@ struct HealthResponse {
 struct MeResponse {
     user_id: String,
     oauth_provider: String,
+    oauth_sub: String,
     email: Option<String>,
+    display_name: Option<String>,
+    avatar_url: Option<String>,
     created_at: i64,
     bunker_url: String,
 }
@@ -101,6 +120,7 @@ struct UserResponse {
     display_name: Option<String>,
     avatar_url: Option<String>,
     oauth_provider: String,
+    oauth_sub: String,
     created_at: i64,
 }
 
@@ -158,13 +178,15 @@ pub fn router() -> Router<AppState> {
         .route("/auth/github/callback", get(auth_github_callback))
         .route("/auth/microsoft/callback", get(auth_microsoft_callback))
         .route("/auth/apple/callback", post(auth_apple_callback))
+        .route("/api/auth/nostr", post(api_auth_nostr))
         .route("/auth/{request_id}", get(auth_popup))
         .route("/api/providers", get(api_providers))
+        .route("/api/features", get(api_features))
         .route("/api/bunker-url", get(api_bunker_url))
         .route("/api/me", get(api_me))
         .route("/api/connections", get(api_connections))
         .route("/api/connections/{id}", delete(api_delete_connection))
-        .route("/api/identities", get(api_list_identities))
+        .route("/api/identities", get(api_list_identities).post(api_create_identity))
         .route("/api/admin/identities", get(api_list_all_identities).post(api_add_identity))
         .route("/api/admin/identities/{id}", delete(api_delete_identity))
         .route("/api/admin/users", get(api_list_users))
@@ -175,6 +197,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/admin/connections/{id}", delete(api_admin_delete_connection))
         .route("/api/admin/config", get(api_admin_config))
         .route("/api/select-identity", post(api_select_identity))
+        .route("/api/reject-auth", post(api_reject_auth))
 }
 
 // ---------------------------------------------------------------------------
@@ -226,7 +249,7 @@ fn verify_admin_auth(
     state: &AppState,
     headers: &HeaderMap,
     method: &str,
-    url: &str,
+    expected_path: &str,
 ) -> Result<String, Response> {
     let auth_header = headers
         .get(header::AUTHORIZATION)
@@ -273,7 +296,14 @@ fn verify_admin_auth(
             None
         }
     });
-    if u_tag.as_deref() != Some(url) {
+    // Compare only the path component of the URL to allow requests from any origin
+    let u_tag_path = u_tag.as_deref().and_then(|u| {
+        // Extract path: find the third slash in "http(s)://host/path"
+        let without_scheme = u.split("://").nth(1)?;
+        let path_start = without_scheme.find('/')?;
+        Some(&without_scheme[path_start..])
+    });
+    if u_tag_path != Some(expected_path) {
         return Err(
             (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error": "URL mismatch"}))).into_response()
         );
@@ -569,6 +599,91 @@ async fn handle_oauth_complete(
 }
 
 // ---------------------------------------------------------------------------
+// Nostr NIP-98 auth
+// ---------------------------------------------------------------------------
+
+async fn api_auth_nostr(
+    State(state): State<AppState>,
+    Json(body): Json<NostrAuthBody>,
+) -> Result<Response, Response> {
+    if !state.config.nostr_auth_enabled {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "Nostr auth is not enabled"})),
+        ).into_response());
+    }
+
+    let event: Event = Event::from_json(&body.signed_event).map_err(|e| {
+        (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": format!("Invalid event: {e}")}))).into_response()
+    })?;
+
+    if event.kind != Kind::from(27235) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "Event must be kind 27235"})),
+        ).into_response());
+    }
+
+    event.verify().map_err(|e| {
+        (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": format!("Invalid signature: {e}")}))).into_response()
+    })?;
+
+    let now = Utc::now().timestamp() as u64;
+    let event_time = event.created_at.as_secs();
+    if now.abs_diff(event_time) > 60 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "Event timestamp too old or too far in the future"})),
+        ).into_response());
+    }
+
+    let url_tag = event.tags.iter().find_map(|tag| {
+        let vec = tag.as_slice();
+        if vec.len() >= 2 && vec[0] == "u" {
+            Some(vec[1].to_string())
+        } else {
+            None
+        }
+    });
+    let expected_url = format!("{}/api/auth/nostr", state.config.public_url);
+    match url_tag {
+        Some(u) if u == expected_url => {}
+        _ => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "URL tag mismatch"})),
+            ).into_response());
+        }
+    }
+
+    let method_tag = event.tags.iter().find_map(|tag| {
+        let vec = tag.as_slice();
+        if vec.len() >= 2 && vec[0] == "method" {
+            Some(vec[1].to_string())
+        } else {
+            None
+        }
+    });
+    if method_tag.as_deref() != Some("POST") {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "Method tag must be POST"})),
+        ).into_response());
+    }
+
+    let pubkey_hex = event.pubkey.to_hex();
+    let oauth_user = crate::oauth::OAuthUser {
+        provider: "nostr".to_string(),
+        sub: pubkey_hex,
+        email: None,
+        name: None,
+        avatar_url: None,
+    };
+
+    handle_oauth_complete(&state, oauth_user, body.request_id).await
+}
+
+// ---------------------------------------------------------------------------
 // Auth popup redirect
 // ---------------------------------------------------------------------------
 
@@ -581,7 +696,18 @@ async fn auth_popup(Path(request_id): Path<String>) -> impl IntoResponse {
 // ---------------------------------------------------------------------------
 
 async fn api_providers(State(state): State<AppState>) -> impl IntoResponse {
-    Json(serde_json::json!({ "providers": state.oauth.enabled_providers() }))
+    let mut providers: Vec<String> = state.oauth.enabled_providers().iter().map(|s| s.to_string()).collect();
+    if state.config.nostr_auth_enabled {
+        providers.push("nostr".to_string());
+    }
+    Json(serde_json::json!({ "providers": providers }))
+}
+
+async fn api_features(State(state): State<AppState>) -> impl IntoResponse {
+    Json(serde_json::json!({
+        "auto_select_single_identity": state.config.auto_select_single_identity,
+        "allow_user_identity_creation": state.config.allow_user_identity_creation,
+    }))
 }
 
 async fn api_bunker_url(State(state): State<AppState>) -> impl IntoResponse {
@@ -623,7 +749,10 @@ async fn api_me(
     Ok(Json(MeResponse {
         user_id: user.id,
         oauth_provider: user.oauth_provider,
+        oauth_sub: user.oauth_sub,
         email: user.email,
+        display_name: user.display_name,
+        avatar_url: user.avatar_url,
         created_at: user.created_at,
         bunker_url,
     }))
@@ -717,6 +846,77 @@ async fn api_list_identities(
 }
 
 // ---------------------------------------------------------------------------
+// API: POST /api/identities  (user creates a new identity for themselves)
+// ---------------------------------------------------------------------------
+
+async fn api_create_identity(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<CreateIdentityBody>,
+) -> Result<impl IntoResponse, Response> {
+    if !state.config.allow_user_identity_creation {
+        return Err((StatusCode::FORBIDDEN, Json(serde_json::json!({"error": "Identity creation is disabled"}))).into_response());
+    }
+
+    let user = get_authenticated_user(&state, &headers)?;
+
+    // Generate a new keypair
+    let keys = Keys::generate();
+    let pubkey = keys.public_key().to_hex();
+    let secret_key_bytes = keys.secret_key().as_secret_bytes().to_vec();
+
+    let identity_id = Uuid::new_v4().to_string();
+
+    let (encrypted_nsec, nonce) = state
+        .crypto
+        .encrypt_nsec(&identity_id, &secret_key_bytes)
+        .map_err(|e| {
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("Encryption error: {e}")}))).into_response()
+        })?;
+
+    let now = Utc::now().timestamp();
+    let identity = Identity {
+        id: identity_id.clone(),
+        encrypted_nsec,
+        nonce,
+        pubkey: pubkey.clone(),
+        label: body.label,
+        created_at: now,
+    };
+
+    state.db.create_identity(&identity).map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("Database error: {e}")}))).into_response()
+    })?;
+
+    // Auto-assign the identity to the current user (effectively no expiration: 100 years)
+    let assignment = Assignment {
+        id: Uuid::new_v4().to_string(),
+        user_id: user.id.clone(),
+        identity_id: identity_id.clone(),
+        allowed_kinds: None,
+        expires_at: now + 100 * 365 * 86400,
+        created_at: now,
+    };
+
+    state.db.create_assignment(&assignment).map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("Database error: {e}")}))).into_response()
+    })?;
+
+    let npub = nostr_sdk::PublicKey::from_hex(&pubkey)
+        .map(|pk| pk.to_bech32().unwrap_or_default())
+        .unwrap_or_default();
+
+    Ok((
+        StatusCode::CREATED,
+        Json(serde_json::json!({
+            "id": identity_id,
+            "pubkey": pubkey,
+            "npub": npub,
+        })),
+    ))
+}
+
+// ---------------------------------------------------------------------------
 // API: GET /api/admin/identities
 // ---------------------------------------------------------------------------
 
@@ -724,8 +924,7 @@ async fn api_list_all_identities(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, Response> {
-    let url = format!("{}/api/admin/identities", state.config.public_url);
-    verify_admin_auth(&state, &headers, "GET", &url)?;
+    verify_admin_auth(&state, &headers, "GET", "/api/admin/identities")?;
 
     let identities = state.db.list_identities().map_err(|e| {
         (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("Database error: {e}")}))).into_response()
@@ -757,8 +956,7 @@ async fn api_add_identity(
     headers: HeaderMap,
     Json(body): Json<AddIdentityBody>,
 ) -> Result<impl IntoResponse, Response> {
-    let url = format!("{}/api/admin/identities", state.config.public_url);
-    verify_admin_auth(&state, &headers, "POST", &url)?;
+    verify_admin_auth(&state, &headers, "POST", "/api/admin/identities")?;
 
     // Parse the nsec bech32 string to get the secret key
     let secret_key = nostr_sdk::SecretKey::from_bech32(&body.nsec).map_err(|e| {
@@ -815,8 +1013,8 @@ async fn api_delete_identity(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<impl IntoResponse, Response> {
-    let url = format!("{}/api/admin/identities/{}", state.config.public_url, id);
-    verify_admin_auth(&state, &headers, "DELETE", &url)?;
+    let path = format!("/api/admin/identities/{}", id);
+    verify_admin_auth(&state, &headers, "DELETE", &path)?;
 
     let deleted = state.db.delete_identity(&id).map_err(|e| {
         (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("Database error: {e}")}))).into_response()
@@ -918,6 +1116,61 @@ async fn api_select_identity(
     })))
 }
 
+async fn api_reject_auth(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<RejectAuthBody>,
+) -> Result<impl IntoResponse, Response> {
+    let _user = get_authenticated_user(&state, &headers)?;
+
+    // Find pending auth
+    let pending = state.db.find_pending_auth(&body.request_id).map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("Database error: {e}")}))).into_response()
+    })?.ok_or_else(|| {
+        (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "Pending auth not found or expired"}))).into_response()
+    })?;
+
+    // Send NIP-46 error response to the waiting client
+    if !pending.nip46_id.is_empty() {
+        let error_response = serde_json::json!({
+            "id": pending.nip46_id,
+            "result": "",
+            "error": "User rejected the connection",
+        })
+        .to_string();
+
+        let client_pk = PublicKey::from_hex(&pending.client_pubkey).map_err(|e| {
+            tracing::error!("Invalid client pubkey: {e}");
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "Invalid client pubkey"}))).into_response()
+        })?;
+
+        let sk = state.signer_keys.secret_key();
+        let encrypted = nip44::encrypt(sk, &client_pk, &error_response, nip44::Version::V2)
+            .map_err(|e| {
+                tracing::error!("NIP-44 encrypt failed: {e}");
+                (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "Encryption failed"}))).into_response()
+            })?;
+
+        let event_builder = EventBuilder::new(Kind::NostrConnect, &encrypted)
+            .tag(Tag::public_key(client_pk));
+
+        if let Err(e) = state.nostr_client.send_event_builder(event_builder).await {
+            tracing::error!("Failed to send NIP-46 reject: {e}");
+        } else {
+            tracing::info!(
+                client = %pending.client_pubkey,
+                nip46_id = %pending.nip46_id,
+                "Sent NIP-46 connect rejection"
+            );
+        }
+    }
+
+    // Delete pending auth
+    let _ = state.db.delete_pending_auth(&body.request_id);
+
+    Ok(Json(serde_json::json!({ "rejected": true })))
+}
+
 // ---------------------------------------------------------------------------
 // Duration parser helper
 // ---------------------------------------------------------------------------
@@ -941,8 +1194,7 @@ async fn api_list_users(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, Response> {
-    let url = format!("{}/api/admin/users", state.config.public_url);
-    verify_admin_auth(&state, &headers, "GET", &url)?;
+    verify_admin_auth(&state, &headers, "GET", "/api/admin/users")?;
 
     let users = state.db.list_all_users().map_err(|e| {
         (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("Database error: {e}")}))).into_response()
@@ -956,6 +1208,7 @@ async fn api_list_users(
             display_name: u.display_name,
             avatar_url: u.avatar_url,
             oauth_provider: u.oauth_provider,
+            oauth_sub: u.oauth_sub,
             created_at: u.created_at,
         })
         .collect();
@@ -972,8 +1225,8 @@ async fn api_delete_user(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<impl IntoResponse, Response> {
-    let url = format!("{}/api/admin/users/{}", state.config.public_url, id);
-    verify_admin_auth(&state, &headers, "DELETE", &url)?;
+    let path = format!("/api/admin/users/{}", id);
+    verify_admin_auth(&state, &headers, "DELETE", &path)?;
 
     let deleted = state.db.delete_user_cascade(&id).map_err(|e| {
         (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("Database error: {e}")}))).into_response()
@@ -994,8 +1247,7 @@ async fn api_list_assignments(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, Response> {
-    let url = format!("{}/api/admin/assignments", state.config.public_url);
-    verify_admin_auth(&state, &headers, "GET", &url)?;
+    verify_admin_auth(&state, &headers, "GET", "/api/admin/assignments")?;
 
     let assignments = state.db.list_assignments().map_err(|e| {
         (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("Database error: {e}")}))).into_response()
@@ -1035,8 +1287,7 @@ async fn api_create_assignment(
     headers: HeaderMap,
     Json(body): Json<CreateAssignmentBody>,
 ) -> Result<impl IntoResponse, Response> {
-    let url = format!("{}/api/admin/assignments", state.config.public_url);
-    verify_admin_auth(&state, &headers, "POST", &url)?;
+    verify_admin_auth(&state, &headers, "POST", "/api/admin/assignments")?;
 
     // Validate user exists
     state.db.find_user_by_id(&body.user_id).map_err(|e| {
@@ -1100,8 +1351,8 @@ async fn api_delete_assignment(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<impl IntoResponse, Response> {
-    let url = format!("{}/api/admin/assignments/{}", state.config.public_url, id);
-    verify_admin_auth(&state, &headers, "DELETE", &url)?;
+    let path = format!("/api/admin/assignments/{}", id);
+    verify_admin_auth(&state, &headers, "DELETE", &path)?;
 
     // Find assignment first to get user_id and identity_id for connection cleanup
     let assignments = state.db.list_assignments().map_err(|e| {
@@ -1141,8 +1392,7 @@ async fn api_admin_list_connections(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, Response> {
-    let url = format!("{}/api/admin/connections", state.config.public_url);
-    verify_admin_auth(&state, &headers, "GET", &url)?;
+    verify_admin_auth(&state, &headers, "GET", "/api/admin/connections")?;
 
     let connections = state.db.list_all_connections_with_identity().map_err(|e| {
         (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("Database error: {e}")}))).into_response()
@@ -1175,8 +1425,8 @@ async fn api_admin_delete_connection(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<impl IntoResponse, Response> {
-    let url = format!("{}/api/admin/connections/{}", state.config.public_url, id);
-    verify_admin_auth(&state, &headers, "DELETE", &url)?;
+    let path = format!("/api/admin/connections/{}", id);
+    verify_admin_auth(&state, &headers, "DELETE", &path)?;
 
     let deleted = state.db.delete_connection_admin(&id).map_err(|e| {
         (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("Database error: {e}")}))).into_response()
@@ -1197,10 +1447,11 @@ async fn api_admin_config(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, Response> {
-    let url = format!("{}/api/admin/config", state.config.public_url);
-    verify_admin_auth(&state, &headers, "GET", &url)?;
+    verify_admin_auth(&state, &headers, "GET", "/api/admin/config")?;
 
     Ok(Json(serde_json::json!({
         "always_allowed_kinds": state.config.always_allowed_kinds,
+        "auto_select_single_identity": state.config.auto_select_single_identity,
+        "allow_user_identity_creation": state.config.allow_user_identity_creation,
     })))
 }

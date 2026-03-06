@@ -74,6 +74,7 @@ interface User {
   display_name: string | null
   avatar_url: string | null
   oauth_provider: string
+  oauth_sub: string
   created_at: number
 }
 
@@ -232,6 +233,10 @@ export default function Admin() {
   const [adminPubkey, setAdminPubkey] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
+  // Fetch admin's nostr profile for sidebar display
+  useRequestProfiles(adminPubkey ? [adminPubkey] : [])
+  const adminProfile = useProfile(adminPubkey)
+
   const [activeSection, setActiveSection] = useState<Section>('keys')
 
   // Data states
@@ -239,7 +244,6 @@ export default function Admin() {
   const [identities, setIdentities] = useState<Identity[]>([])
   const [users, setUsers] = useState<User[]>([])
   const [assignments, setAssignments] = useState<Assignment[]>([])
-  const [alwaysAllowedKinds, setAlwaysAllowedKinds] = useState<number[]>([])
   const [dataLoading, setDataLoading] = useState(false)
 
   // Add identity form
@@ -337,12 +341,7 @@ export default function Admin() {
   }, [])
 
   const fetchConfig = useCallback(async () => {
-    try {
-      const res = await adminFetch('/api/admin/config')
-      if (!res.ok) throw new Error('Failed to fetch config')
-      const data = await res.json()
-      setAlwaysAllowedKinds(data.always_allowed_kinds ?? [])
-    } catch { /* best-effort */ }
+    // Config fetch reserved for future use
   }, [])
 
   // Fetch all stats on initial auth
@@ -532,7 +531,7 @@ export default function Admin() {
             </div>
             <CardTitle className="text-xl tracking-tight">Not Authorized</CardTitle>
             <CardDescription className="text-sm">
-              <span className="font-mono text-xs">{adminPubkey ? truncate(adminPubkey, 20) : 'unknown'}</span> is not in the admin allowlist.
+              <span className="font-mono text-xs">{adminPubkey ? truncate(nip19.npubEncode(adminPubkey), 20) : 'unknown'}</span> is not in the admin allowlist.
             </CardDescription>
           </CardHeader>
           <CardContent className="pt-2 flex justify-center">
@@ -584,6 +583,19 @@ export default function Admin() {
 
         <div className="px-3 pb-3 space-y-1">
           <div className="glow-line mx-1 mb-2 opacity-30" />
+          {adminPubkey && (
+            <div className="flex items-center gap-2.5 px-3 py-2 mb-1">
+              <ProfileAvatar picture={adminProfile?.picture} fallbackIcon={Shield} />
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium">
+                  {adminProfile?.display_name || adminProfile?.name || truncate(nip19.npubEncode(adminPubkey), 16)}
+                </p>
+                <p className="truncate text-[10px] text-muted-foreground font-mono">
+                  {truncate(nip19.npubEncode(adminPubkey), 16)}
+                </p>
+              </div>
+            </div>
+          )}
           <button
             onClick={toggleTheme}
             className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm cursor-pointer text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-all duration-200"
@@ -606,10 +618,10 @@ export default function Admin() {
         {/* Stat bar */}
         <div className="p-6 pb-0">
           <div className="grid grid-cols-4 gap-4">
-            <StatCard label="Sessions" value={connections.length} icon={Wifi} />
-            <StatCard label="Users" value={users.length} icon={Users} />
             <StatCard label="Identities" value={identities.length} icon={Key} />
+            <StatCard label="Users" value={users.length} icon={Users} />
             <StatCard label="Assignments" value={assignments.length} icon={Link} />
+            <StatCard label="Sessions" value={connections.length} icon={Wifi} />
           </div>
         </div>
 
@@ -640,7 +652,7 @@ export default function Admin() {
                   assignments={assignments}
                   users={users}
                   identities={identities}
-                  alwaysAllowedKinds={alwaysAllowedKinds}
+
                   selectedUserId={selectedUserId}
                   selectedIdentityId={selectedIdentityId}
                   selectedDuration={selectedDuration}
@@ -724,21 +736,26 @@ function SessionsTable({ connections, users, onRevoke }: { connections: Connecti
 function SessionRow({ conn, user, onRevoke }: { conn: Connection; user?: User; onRevoke: (id: string) => void }) {
   const clientProfile = useProfile(conn.client_pubkey)
   const identityProfile = useProfile(conn.identity_pubkey)
+  const isNostr = user?.oauth_provider === 'nostr'
+  const userNostrProfile = useProfile(isNostr ? user.oauth_sub : null)
   const clientName = clientProfile?.display_name || clientProfile?.name
   const npub = conn.identity_pubkey ? nip19.npubEncode(conn.identity_pubkey) : null
+
+  const userAvatar = user?.avatar_url || userNostrProfile?.picture
+  const userName = user?.display_name || userNostrProfile?.display_name || userNostrProfile?.name || conn.user_email || truncate(conn.user_id)
 
   return (
     <TableRow className="hover:bg-accent/30 transition-colors">
       <TableCell>
         <div className="flex items-center gap-2">
-          {user?.avatar_url ? (
-            <img src={user.avatar_url} alt="" className="h-7 w-7 rounded-full object-cover ring-1 ring-border shrink-0" />
+          {userAvatar ? (
+            <img src={userAvatar} alt="" className="h-7 w-7 rounded-full object-cover ring-1 ring-border shrink-0" />
           ) : (
             <div className="h-7 w-7 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
               <Users className="h-3.5 w-3.5 text-primary/60" />
             </div>
           )}
-          <span className="text-sm">{user?.display_name || conn.user_email || truncate(conn.user_id)}</span>
+          <span className="text-sm">{userName}</span>
         </div>
       </TableCell>
       <TableCell>
@@ -755,7 +772,7 @@ function SessionRow({ conn, user, onRevoke }: { conn: Connection; user?: User; o
             <img src={clientProfile.picture} alt="" className="h-7 w-7 rounded-full object-cover ring-1 ring-border" />
           )}
           <span className={clientName ? 'text-sm' : 'text-sm font-mono'}>
-            {clientName || truncate(conn.client_pubkey)}
+            {clientName || truncate(nip19.npubEncode(conn.client_pubkey))}
           </span>
         </div>
       </TableCell>
@@ -789,6 +806,12 @@ function SessionRow({ conn, user, onRevoke }: { conn: Connection; user?: User; o
 }
 
 function UsersTable({ users, onDelete }: { users: User[]; onDelete: (id: string) => void }) {
+  const nostrPubkeys = useMemo(
+    () => users.filter((u) => u.oauth_provider === 'nostr').map((u) => u.oauth_sub),
+    [users],
+  )
+  useRequestProfiles(nostrPubkeys)
+
   return (
     <div>
       <SectionHeading>Users</SectionHeading>
@@ -809,54 +832,88 @@ function UsersTable({ users, onDelete }: { users: User[]; onDelete: (id: string)
             </TableHeader>
             <TableBody>
               {users.map((user) => (
-                <TableRow key={user.id} className="hover:bg-accent/30 transition-colors">
-                  <TableCell>
-                    {user.avatar_url ? (
-                      <img src={user.avatar_url} alt="" className="h-7 w-7 rounded-full ring-1 ring-border" />
-                    ) : (
-                      <div className="h-7 w-7 rounded-full bg-primary/10 flex items-center justify-center">
-                        <Users className="h-3.5 w-3.5 text-primary/60" />
-                      </div>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-sm">{user.display_name || '\u2014'}</TableCell>
-                  <TableCell className="text-sm">{user.email || '\u2014'}</TableCell>
-                  <TableCell>
-                    <Badge variant="secondary" className="text-xs font-mono">{user.oauth_provider}</Badge>
-                  </TableCell>
-                  <TableCell className="text-sm text-muted-foreground">
-                    {new Date(user.created_at * 1000).toLocaleDateString()}
-                  </TableCell>
-                  <TableCell>
-                    <AlertDialog>
-                      <AlertDialogTrigger asChild>
-                        <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10">
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </AlertDialogTrigger>
-                      <AlertDialogContent>
-                        <AlertDialogHeader>
-                          <AlertDialogTitle>Delete user?</AlertDialogTitle>
-                          <AlertDialogDescription>
-                            This will permanently delete the user and all their sessions, assignments, and connections.
-                          </AlertDialogDescription>
-                        </AlertDialogHeader>
-                        <AlertDialogFooter>
-                          <AlertDialogCancel>Cancel</AlertDialogCancel>
-                          <AlertDialogAction onClick={() => onDelete(user.id)}>
-                            Delete
-                          </AlertDialogAction>
-                        </AlertDialogFooter>
-                      </AlertDialogContent>
-                    </AlertDialog>
-                  </TableCell>
-                </TableRow>
+                <UserRow key={user.id} user={user} onDelete={onDelete} />
               ))}
             </TableBody>
           </Table>
         </div>
       )}
     </div>
+  )
+}
+
+function UserRow({ user, onDelete }: { user: User; onDelete: (id: string) => void }) {
+  const isNostr = user.oauth_provider === 'nostr'
+  const nostrProfile = useProfile(isNostr ? user.oauth_sub : null)
+
+  const avatarUrl = user.avatar_url || nostrProfile?.picture
+  const displayName = user.display_name || nostrProfile?.display_name || nostrProfile?.name || (isNostr ? truncate(nip19.npubEncode(user.oauth_sub), 20) : null)
+
+  return (
+    <TableRow className="hover:bg-accent/30 transition-colors">
+      <TableCell>
+        {avatarUrl ? (
+          <img src={avatarUrl} alt="" className="h-7 w-7 rounded-full ring-1 ring-border object-cover" />
+        ) : (
+          <div className="h-7 w-7 rounded-full bg-primary/10 flex items-center justify-center">
+            <Users className="h-3.5 w-3.5 text-primary/60" />
+          </div>
+        )}
+      </TableCell>
+      <TableCell className="text-sm">{displayName || '\u2014'}</TableCell>
+      <TableCell className="text-sm">{user.email || '\u2014'}</TableCell>
+      <TableCell>
+        <Badge variant="secondary" className="text-xs font-mono">{user.oauth_provider}</Badge>
+      </TableCell>
+      <TableCell className="text-sm text-muted-foreground">
+        {new Date(user.created_at * 1000).toLocaleDateString()}
+      </TableCell>
+      <TableCell>
+        <AlertDialog>
+          <AlertDialogTrigger asChild>
+            <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10">
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          </AlertDialogTrigger>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete user?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This will permanently delete the user and all their sessions, assignments, and connections.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction onClick={() => onDelete(user.id)}>
+                Delete
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      </TableCell>
+    </TableRow>
+  )
+}
+
+function UserSelectOption({ user }: { user: User }) {
+  const isNostr = user.oauth_provider === 'nostr'
+  const nostrProfile = useProfile(isNostr ? user.oauth_sub : null)
+  const avatarUrl = user.avatar_url || nostrProfile?.picture
+  const label = user.email || user.display_name || nostrProfile?.display_name || nostrProfile?.name || (isNostr ? truncate(nip19.npubEncode(user.oauth_sub), 20) : truncate(user.id))
+
+  return (
+    <SelectItem value={user.id}>
+      <span className="flex items-center gap-2">
+        {avatarUrl ? (
+          <img src={avatarUrl} alt="" className="h-5 w-5 rounded-full shrink-0" />
+        ) : (
+          <span className="h-5 w-5 rounded-full bg-primary/10 shrink-0 inline-flex items-center justify-center">
+            <Users className="h-3 w-3 text-primary/60" />
+          </span>
+        )}
+        {label + ` (${user.oauth_provider})`}
+      </span>
+    </SelectItem>
   )
 }
 
@@ -997,7 +1054,6 @@ function AssignmentsSection({
   assignments,
   users,
   identities,
-  alwaysAllowedKinds,
   selectedUserId,
   selectedIdentityId,
   selectedDuration,
@@ -1014,7 +1070,6 @@ function AssignmentsSection({
   assignments: Assignment[]
   users: User[]
   identities: Identity[]
-  alwaysAllowedKinds: number[]
   selectedUserId: string
   selectedIdentityId: string
   selectedDuration: string
@@ -1033,6 +1088,11 @@ function AssignmentsSection({
     [assignments],
   )
   useRequestProfiles(identityPubkeys)
+  const nostrUserPubkeys = useMemo(
+    () => users.filter((u) => u.oauth_provider === 'nostr').map((u) => u.oauth_sub),
+    [users],
+  )
+  useRequestProfiles(nostrUserPubkeys)
 
   const togglePreset = (label: string) => {
     onKindPresetsChange(
@@ -1056,18 +1116,7 @@ function AssignmentsSection({
             </SelectTrigger>
             <SelectContent>
               {users.map((user) => (
-                <SelectItem key={user.id} value={user.id}>
-                  <span className="flex items-center gap-2">
-                    {user.avatar_url ? (
-                      <img src={user.avatar_url} alt="" className="h-5 w-5 rounded-full shrink-0" />
-                    ) : (
-                      <span className="h-5 w-5 rounded-full bg-primary/10 shrink-0 inline-flex items-center justify-center">
-                        <Users className="h-3 w-3 text-primary/60" />
-                      </span>
-                    )}
-                    {(user.email || user.display_name || truncate(user.id)) + ` (${user.oauth_provider})`}
-                  </span>
-                </SelectItem>
+                <UserSelectOption key={user.id} user={user} />
               ))}
             </SelectContent>
           </Select>
@@ -1082,8 +1131,8 @@ function AssignmentsSection({
               {identities.map((identity) => (
                 <SelectItem key={identity.id} value={identity.id}>
                   {identity.label
-                    ? `${identity.label} (${truncate(identity.pubkey)})`
-                    : truncate(identity.pubkey, 24)}
+                    ? `${identity.label} (${truncate(nip19.npubEncode(identity.pubkey))})`
+                    : truncate(nip19.npubEncode(identity.pubkey), 24)}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -1143,17 +1192,6 @@ function AssignmentsSection({
         </p>
       </div>
 
-      {alwaysAllowedKinds.length > 0 && (
-        <div className="mb-6 rounded-lg border border-border bg-muted/30 px-4 py-3">
-          <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-1">Always Allowed Kinds (all users)</p>
-          <div className="flex flex-wrap gap-1.5">
-            {alwaysAllowedKinds.map((kind) => (
-              <Badge key={kind} variant="outline" className="text-xs font-mono">{kind}</Badge>
-            ))}
-          </div>
-          <p className="text-xs text-muted-foreground mt-1">Configured via <code className="text-[10px] bg-muted px-1 py-0.5 rounded">ALWAYS_ALLOWED_KINDS</code> env var</p>
-        </div>
-      )}
 
       {assignments.length === 0 ? (
         <p className="text-sm text-muted-foreground">No assignments.</p>
@@ -1189,18 +1227,23 @@ function AssignmentsSection({
 
 function AssignmentRow({ assignment, user, onDelete }: { assignment: Assignment; user?: User; onDelete: (id: string) => void }) {
   const identityProfile = useProfile(assignment.identity_pubkey)
+  const isNostr = user?.oauth_provider === 'nostr'
+  const userNostrProfile = useProfile(isNostr ? user.oauth_sub : null)
   const npub = assignment.identity_pubkey ? nip19.npubEncode(assignment.identity_pubkey) : null
   const isExpired = assignment.expires_at * 1000 < Date.now()
   const presetLabels = assignment.allowed_kinds
     ? kindsToPresetLabels(assignment.allowed_kinds)
     : null
 
+  const userAvatar = user?.avatar_url || userNostrProfile?.picture
+  const userName = user?.display_name || userNostrProfile?.display_name || userNostrProfile?.name || assignment.user_email || truncate(assignment.user_id)
+
   return (
     <TableRow className="hover:bg-accent/30 transition-colors">
       <TableCell>
         <div className="flex items-center gap-2">
-          <ProfileAvatar picture={user?.avatar_url ?? undefined} fallbackIcon={Users} />
-          <span className="text-sm">{user?.display_name || assignment.user_email || truncate(assignment.user_id)}</span>
+          <ProfileAvatar picture={userAvatar ?? undefined} fallbackIcon={Users} />
+          <span className="text-sm">{userName}</span>
         </div>
       </TableCell>
       <TableCell>

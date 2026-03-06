@@ -18,6 +18,9 @@ pub struct Config {
     pub database_url: String,
     pub admin_pubkeys: Vec<String>,
     pub always_allowed_kinds: Vec<u64>,
+    pub auto_select_single_identity: bool,
+    pub allow_user_identity_creation: bool,
+    pub nostr_auth_enabled: bool,
 }
 
 impl Config {
@@ -73,6 +76,18 @@ impl Config {
                 .unwrap_or_else(|_| "oauth-signer.db".into()),
             admin_pubkeys,
             always_allowed_kinds,
+            auto_select_single_identity: env::var("AUTO_SELECT_SINGLE_IDENTITY")
+                .unwrap_or_else(|_| "false".into())
+                .parse()
+                .unwrap_or(false),
+            allow_user_identity_creation: env::var("ALLOW_USER_IDENTITY_CREATION")
+                .unwrap_or_else(|_| "true".into())
+                .parse()
+                .unwrap_or(true),
+            nostr_auth_enabled: env::var("NOSTR_AUTH_ENABLED")
+                .unwrap_or_else(|_| "false".into())
+                .parse()
+                .unwrap_or(false),
         })
     }
 }
